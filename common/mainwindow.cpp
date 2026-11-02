@@ -1,4 +1,5 @@
 #include "mainwindow.h"
+#include "capi/oghooks.h"
 
 #include <Tempest/Except>
 #include <Tempest/Painter>
@@ -1261,6 +1262,8 @@ void MainWindow::render(){
     const uint64_t dt = tick();
     updateAnimation(dt);
     tickCamera(dt);
+    if(OgHooks::onFrame!=nullptr)
+      OgHooks::onFrame();
 
     auto& sync = fence[cmdId];
     if(!sync.wait(0)) {
