@@ -41,6 +41,25 @@ class DialogMenu : public Tempest::Widget {
     void keyDownEvent   (Tempest::KeyEvent&   event) override;
     void keyUpEvent     (Tempest::KeyEvent&   event) override;
 
+    // opengothic-rs: read-only view for the C seam (game/capi). Pointers are valid
+    // until the dialog state changes (main thread only).
+    struct OgView {
+      const Npc*                                partner = nullptr;  // nullptr: no dialog
+      const std::string*                        line    = nullptr;  // nullptr: nobody speaking
+      bool                                      lineIsPlayer = false;
+      const std::vector<GameScript::DlgChoice>* choices = nullptr;  // nullptr: no menu shown
+      };
+    OgView ogView() const {
+      OgView v;
+      if(state==State::Idle || other==nullptr)
+        return v;
+      v.partner      = other;
+      v.line         = current.time>0 ? &current.txt : nullptr;
+      v.lineIsPlayer = curentIsPl;
+      v.choices      = isChoiceMenuActive() ? &choice : nullptr;
+      return v;
+      }
+
   protected:
     void paintEvent (Tempest::PaintEvent& e) override;
     void paintChoice(Tempest::PaintEvent& e);

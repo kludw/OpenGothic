@@ -10,10 +10,6 @@
 #include "og_capi_internal.h"
 #include "../og_main.h"
 
-struct og_ctx {
-  uint64_t frame = 0;
-  };
-
 namespace {
 og_callbacks callbacks = {};
 og_ctx       ctx;
@@ -25,8 +21,11 @@ std::atomic<void(*)(void*,int,const char*,const char*)> logFn{nullptr};
 std::atomic<void*>                                      logUser{nullptr};
 
 void onFrame() {
-  if(callbacks.on_frame!=nullptr)
+  if(callbacks.on_frame!=nullptr) {
+    ctx.inFrame = true;
     callbacks.on_frame(callbacks.user,&ctx);
+    ctx.inFrame = false;
+    }
   ++ctx.frame;
   }
 }
