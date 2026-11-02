@@ -1,4 +1,5 @@
 #include "gothic.h"
+#include "capi/oghooks.h"
 
 #include <Tempest/Log>
 #include <Tempest/TextCodec>
@@ -544,6 +545,8 @@ bool Gothic::finishLoading() {
   if(state!=LoadState::Finalize && state!=LoadState::FailedLoad && state!=LoadState::FailedSave)
     return false;
   if(loadingFlag.compare_exchange_strong(state,LoadState::Idle)){
+    if(state==LoadState::FailedSave)
+      ++OgHooks::saveFailures;
     loaderTh.join();
     if(pendingGame!=nullptr)
       game = std::move(pendingGame);

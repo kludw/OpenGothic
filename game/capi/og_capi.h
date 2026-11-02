@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-#define OG_CAPI_VERSION 6
+#define OG_CAPI_VERSION 7
 
 /* Per-frame context; only valid inside the callback that received it. */
 typedef struct og_ctx og_ctx;
@@ -330,6 +330,25 @@ typedef struct og_frame_info {
  * size stays the same within one on_frame call. Waits for the GPU (tens of ms), so
  * do not call it every frame. Only inside on_frame (main thread). */
 int og_capture_frame(og_ctx* ctx, uint32_t max_width, uint8_t* buf, size_t cap, og_frame_info* info);
+
+/* ---- Saving (v7) --------------------------------------------------------------- */
+
+/* Starts saving the game to path (a file name; game bytes, NUL-terminated) the way a
+ * quick save does: the save is written on the game's loading thread over the next
+ * frames, with no world loaded meanwhile (og_read_state reports none). Returns
+ * OG_CTL_OK once the save has started; OG_CTL_REJECTED (reason written, as in
+ * og_submit) when the game will not save now: a dialog or a cutscene runs (like the
+ * save menu, a save there is refused); OG_CTL_NOT_IN_GAME without a world or while
+ * loading/saving. Follow it with og_poll_save. Only inside on_frame. */
+int og_save(og_ctx* ctx, const char* path, char* reason, size_t cap);
+
+typedef struct og_save_status {
+  int32_t  busy;      /* 1 while a load or save runs, 0 when idle */
+  uint64_t failures;  /* saves that failed since start; compare before/after og_save */
+} og_save_status;
+
+/* Fills *out. Only inside on_frame. OG_CTL_OK or OG_CTL_BAD_ARGS. */
+int og_poll_save(og_ctx* ctx, og_save_status* out);
 
 #ifdef __cplusplus
 }

@@ -19,4 +19,7 @@ namespace OgHooks {
   extern MainWindow*    mainWindow;
   // Bumped when a world load starts (not on saves), so the seam can drop per-world ids.
   extern uint64_t worldGeneration;
+  // Bumped when a save ends in LoadState::FailedSave (Gothic::finishLoading), the only
+  // trace a failed save leaves once the state is back to Idle.
+  extern uint64_t saveFailures;
   }
