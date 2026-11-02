@@ -307,7 +307,7 @@ void InstanceStorage::uploadMain() {
   Workers::setThreadName("InstanceStorage upload");
   while(true) {
     std::unique_lock<std::mutex> lck(sync);
-    // opengothic-rs (UB-16): with a predicate, so a notify sent while this thread was
+    // opengothic-rs (UB-18): with a predicate, so a notify sent while this thread was
     // not yet waiting (between two uploads) is not lost; join() would spin forever.
     uploadCnd.wait(lck,[this](){ return uploadFId>=0; });
     if(uploadFId==Resources::MaxFramesInFlight)
