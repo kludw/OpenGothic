@@ -324,6 +324,16 @@ void VideoWidget::keyDownEvent(KeyEvent& event) {
     }
   }
 
+void VideoWidget::ogStopAll() {
+  {
+  std::lock_guard<std::mutex> guard(syncVideo);
+  pendingVideo = {};
+  hasPendingVideo.store(false);
+  }
+  if(ctx!=nullptr || active)
+    stopVideo();
+  }
+
 void VideoWidget::keyUpEvent(KeyEvent&) {
   }
 

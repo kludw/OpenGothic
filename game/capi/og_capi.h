@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-#define OG_CAPI_VERSION 2
+#define OG_CAPI_VERSION 3
 
 /* Per-frame context; only valid inside the callback that received it. */
 typedef struct og_ctx og_ctx;
@@ -82,7 +82,8 @@ typedef struct og_state_header {
   int64_t day;     /* 0-based */
   int32_t hour;
   int32_t minute;
-  int32_t paused;  /* 1 if the simulation is paused, else 0 */
+  int32_t paused;  /* 1 if the simulation is paused (by anyone), else 0 */
+  int32_t video_playing;  /* 1 while a video plays or is queued: the simulation does not advance */
 } og_state_header;
 
 typedef struct og_player_state {
@@ -187,6 +188,91 @@ typedef struct og_state_visitor {
 /* Visits the current game state. Only inside on_frame with its ctx (main thread).
  * Reading the inventory sorts it, as opening the inventory UI does. */
 int og_read_state(og_ctx* ctx, const og_state_query* q, const og_state_visitor* v);
+
+/* ---- Control (v3) ----------------------------------------------------------- */
+
+/* Result codes of the control functions below. */
+#define OG_CTL_OK          0
+#define OG_CTL_REJECTED    1      /* og_submit: command not possible now; reason written */
+#define OG_CTL_NOT_IN_GAME 2      /* no world (menu, loading, saving); reason written */
+#define OG_CTL_BAD_ARGS    (-1)   /* outside on_frame, NULL or malformed arguments */
+#define OG_CTL_EXCEPTION   (-2)   /* C++ exception (logged) */
+
+/* Freezes (1) or resumes (0) the simulation; rendering continues. The host holds at
+ * most one pause: repeated calls with the same value do nothing, and pauses taken by
+ * the game itself (menus) are kept. Only inside on_frame. */
+int og_set_paused(og_ctx* ctx, int paused);
+
+/* Drops queued videos and stops the playing one, as Escape does. Returns 1 if a video
+ * was playing or queued, 0 if not, OG_CTL_BAD_ARGS outside on_frame. */
+int og_skip_videos(og_ctx* ctx);
+
+#define OG_CMD_GO_TO         1
+#define OG_CMD_TURN_TO       2
+#define OG_CMD_TALK_TO       3
+#define OG_CMD_CHOOSE_DIALOG 4
+#define OG_CMD_WAIT          5
+#define OG_CMD_PICK_UP       6
+#define OG_CMD_STEP          7
+#define OG_CMD_TURN          8
+#define OG_CMD_JUMP          9
+
+#define OG_TARGET_WAYPOINT 1  /* name */
+#define OG_TARGET_NPC      2  /* id */
+#define OG_TARGET_ITEM     3  /* id */
+#define OG_TARGET_POSITION 4  /* position */
+
+typedef struct og_target {
+  int32_t  kind;      /* OG_TARGET_* */
+  uint32_t id;        /* og_npc_state.id / og_item_state.id */
+  og_str   name;      /* waypoint name (game bytes); only read during og_submit */
+  og_vec3  position;
+} og_target;
+
+#define OG_STEP_FORWARD  1
+#define OG_STEP_BACKWARD 2
+#define OG_STEP_LEFT     3
+#define OG_STEP_RIGHT    4
+
+/* One command; only the fields of its kind are read:
+ * GO_TO, TURN_TO: target.  TALK_TO: target.id (an NPC).  PICK_UP: target.id (an item).
+ * CHOOSE_DIALOG: index (og_dialog_option_state.index).  WAIT: seconds of simulation time
+ * (0..86400).
+ * STEP: direction + millis of simulation time.  TURN: degrees, positive turns right
+ * (clockwise seen from above, heading_deg decreases).  JUMP: nothing. */
+typedef struct og_command {
+  int32_t   kind;  /* OG_CMD_* */
+  og_target target;
+  uint32_t  index;
+  float     seconds;
+  int32_t   direction;  /* OG_STEP_* */
+  uint32_t  millis;
+  float     degrees;
+} og_command;
+
+/* Starts a command as the host's one action, replacing (cancelling) a running one.
+ * Validated now: unknown/stale ids, unknown waypoints, a command that does not fit the
+ * current state (e.g. choose_dialog without a choice menu, moving while in a dialog,
+ * a script driving the player) give OG_CTL_REJECTED and leave a running action alone.
+ * reason (cap bytes, may be NULL if cap is 0) receives a NUL-terminated, possibly
+ * truncated explanation for REJECTED/NOT_IN_GAME, in game bytes (Windows-1252).
+ * Only inside on_frame. */
+int og_submit(og_ctx* ctx, const og_command* cmd, char* reason, size_t cap);
+
+/* Cancels the running host action (nothing is reported for it). Only inside on_frame. */
+int og_cancel_action(og_ctx* ctx);
+
+#define OG_ACTION_NONE     0  /* no host action */
+#define OG_ACTION_RUNNING  1
+#define OG_ACTION_FINISHED 2  /* reported once, then NONE */
+#define OG_ACTION_FAILED   3  /* reported once with a reason, then NONE */
+
+/* Advances the host action by one frame and returns its OG_ACTION_* state (or a
+ * negative OG_CTL_* code). Call once per on_frame while an action may run; actions only
+ * progress (and only touch the world) while the simulation runs: not while paused or
+ * while a video plays. reason as in og_submit, written for FAILED.
+ * A world change (load, new game) fails the running action. */
+int og_action_update(og_ctx* ctx, char* reason, size_t cap);
 
 #ifdef __cplusplus
 }

@@ -15,10 +15,12 @@
 
 #include "capi/oghooks.h"
 #include "og_capi_internal.h"
+#include "og_ids.h"
 #include "game/gamescript.h"
 #include "game/inventory.h"
 #include "game/questlog.h"
 #include "ui/dialogmenu.h"
+#include "ui/videowidget.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
 #include "world/waypoint.h"
@@ -35,49 +37,7 @@ og_vec3 vec(const Tempest::Vec3& v) {
   return og_vec3{v.x,v.y,v.z};
   }
 
-// Host-facing ids, valid within one loaded world. The counter is never reset, so an id
-// from an earlier world (or a freed item) never names a different object.
-struct Ids {
-  uint64_t generation = UINT64_MAX;
-  uint32_t next       = 1;
-  // Npc objects live until their World is destroyed (removed ones are parked), so the
-  // address is a safe key within a generation.
-  std::unordered_map<const Npc*,uint32_t> npcs;
-  // Items are freed on pickup/merge and their memory reused: the weak_ptr tells a
-  // reused address from the original instance.
-  struct ItemEntry {
-    std::weak_ptr<zenkit::IItem> handle;
-    uint32_t                     id = 0;
-    };
-  std::unordered_map<const zenkit::IItem*,ItemEntry> items;
-
-  void sync() {
-    if(generation==OgHooks::worldGeneration)
-      return;
-    generation = OgHooks::worldGeneration;
-    npcs.clear();
-    items.clear();
-    }
-
-  uint32_t npc(const Npc& n) {
-    auto [it,inserted] = npcs.try_emplace(&n,0u);
-    if(inserted)
-      it->second = next++;
-    return it->second;
-    }
-
-  uint32_t item(Item& i) {
-    const auto& h  = i.handlePtr();
-    auto&       e  = items[h.get()];
-    if(e.id==0 || e.handle.expired()) {
-      e.handle = h;
-      e.id     = next++;
-      }
-    return e.id;
-    }
-  };
-
-Ids ids;
+OgIds& ids = ogIds();
 
 // GIL_* constant names by value; the same for every world of one game script.
 std::unordered_map<int32_t,std::string> guildNames;
@@ -136,6 +96,7 @@ void visit(Gothic& g, World& w, Npc& pl, const og_state_query& q, const og_state
   h.hour   = int32_t(t.hour());
   h.minute = int32_t(t.minute());
   h.paused = g.isPause() ? 1 : 0;
+  h.video_playing = OgHooks::video!=nullptr && OgHooks::video->isActive() ? 1 : 0;
   v.header(u,&h);
 
   og_player_state p = {};
@@ -297,4 +258,9 @@ int og_read_state(og_ctx* ctx, const og_state_query* q, const og_state_visitor* 
     Tempest::Log::e("og_read_state: unknown exception");
     }
   return OG_STATE_EXCEPTION;
+  }
+
+OgIds& ogIds() {
+  static OgIds ids;
+  return ids;
   }

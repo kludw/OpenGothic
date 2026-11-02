@@ -207,7 +207,7 @@ if(IOS)
 endif()
 
 # opengothic-rs: game entry as a library (og_main) so a host program can embed the game
-target_sources(opengothic_core PRIVATE game/main.cpp game/og_main.h game/capi/og_capi.h game/capi/og_capi.cpp game/capi/og_capi_internal.h game/capi/og_state.cpp)
+target_sources(opengothic_core PRIVATE game/main.cpp game/og_main.h game/capi/og_capi.h game/capi/og_capi.cpp game/capi/og_capi_internal.h game/capi/og_state.cpp game/capi/og_ids.h game/capi/og_control.cpp)
 target_include_directories(opengothic_core PUBLIC game/capi)
 target_link_libraries(opengothic_core PUBLIC OpenGothic)
 add_executable(og_capi_smoke EXCLUDE_FROM_ALL game/capi/og_capi_smoke.c)

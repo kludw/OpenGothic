@@ -59,6 +59,15 @@ class DialogMenu : public Tempest::Widget {
       v.choices      = isChoiceMenuActive() ? &choice : nullptr;
       return v;
       }
+    // opengothic-rs: picks choice `index` as Enter would; false if no choice menu is shown
+    // or the index is out of range.
+    bool ogChoose(size_t index) {
+      if(!isChoiceMenuActive() || index>=choice.size())
+        return false;
+      dlgSel = index;
+      onSelect();
+      return true;
+      }
 
   protected:
     void paintEvent (Tempest::PaintEvent& e) override;

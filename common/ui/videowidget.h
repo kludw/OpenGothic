@@ -18,6 +18,9 @@ class VideoWidget : public Tempest::Widget {
     void paint(Tempest::Device& device, uint8_t fId);
     void paintEvent(Tempest::PaintEvent &event) override;
 
+    // opengothic-rs: drops queued videos and stops the playing one (as Escape would, for all).
+    void ogStopAll();
+
     void keyDownEvent(Tempest::KeyEvent&   event) override;
     void keyUpEvent  (Tempest::KeyEvent&   event) override;
 

@@ -116,7 +116,9 @@ MainWindow::MainWindow(Device& device)
   }
 
 MainWindow::~MainWindow() {
-  OgHooks::dialogMenu = nullptr;
+  OgHooks::dialogMenu    = nullptr;
+  OgHooks::playerControl = nullptr;
+  OgHooks::video         = nullptr;
   GameMusic::inst().stopMusic();
   Gothic::inst().cancelLoading();
   device.waitIdle();
@@ -154,7 +156,9 @@ void MainWindow::setupUi() {
 
   Gothic::inst().onDialogPipe  .bind(&dialogs,&DialogMenu::openPipe);
   Gothic::inst().isNpcInDialogFn = std::bind(&DialogMenu::isNpcInDialog, &dialogs, std::placeholders::_1);
-  OgHooks::dialogMenu = &dialogs;
+  OgHooks::dialogMenu    = &dialogs;
+  OgHooks::playerControl = &player;
+  OgHooks::video         = &video;
 
   Gothic::inst().onPrintScreen .bind(&dialogs,&DialogMenu::printScreen);
   Gothic::inst().onPrint       .bind(&dialogs,&DialogMenu::print);
