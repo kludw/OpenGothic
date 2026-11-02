@@ -3,6 +3,7 @@
 #include <cstdint>
 
 class DialogMenu;
+class MainWindow;
 class PlayerControl;
 class VideoWidget;
 
@@ -15,6 +16,7 @@ namespace OgHooks {
   extern DialogMenu*    dialogMenu;
   extern PlayerControl* playerControl;
   extern VideoWidget*   video;
+  extern MainWindow*    mainWindow;
   // Bumped when a world load starts (not on saves), so the seam can drop per-world ids.
   extern uint64_t worldGeneration;
   }

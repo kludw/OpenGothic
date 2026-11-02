@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-#define OG_CAPI_VERSION 5
+#define OG_CAPI_VERSION 6
 
 /* Per-frame context; only valid inside the callback that received it. */
 typedef struct og_ctx og_ctx;
@@ -309,6 +309,27 @@ int og_cancel_action(og_ctx* ctx);
  * while a video plays. reason as in og_submit, written for FAILED.
  * A world change (load, new game) fails the running action. */
 int og_action_update(og_ctx* ctx, char* reason, size_t cap);
+
+/* ---- Frame capture (v6) ------------------------------------------------------ */
+
+typedef struct og_frame_info {
+  uint32_t width, height;  /* pixels; 0x0 unless OK or TOO_SMALL */
+} og_frame_info;
+
+#define OG_CAPTURE_OK        0
+#define OG_CAPTURE_NO_IMAGE  1     /* the window has no area (minimised) or no window yet */
+#define OG_CAPTURE_TOO_SMALL 2     /* buf is NULL or cap < width*height*4: info is set, nothing drawn */
+#define OG_CAPTURE_BAD_ARGS  (-1)  /* outside on_frame, or info is NULL */
+#define OG_CAPTURE_EXCEPTION (-2)  /* C++ exception (logged) */
+#define OG_CAPTURE_READBACK  (-3)  /* the GPU readback had an unexpected size or format (logged) */
+
+/* Draws the current frame again offscreen, world and UI as on screen (a playing video
+ * included; the world is drawn as of this frame's tick, the UI as last shown), and copies it into buf as RGBA8: rows top to bottom, width*4 bytes each,
+ * alpha not meaningful. Wider windows are scaled down (box filter) to max_width with
+ * the window's aspect ratio (0 = no limit). Call with buf NULL to learn the size; the
+ * size stays the same within one on_frame call. Waits for the GPU (tens of ms), so
+ * do not call it every frame. Only inside on_frame (main thread). */
+int og_capture_frame(og_ctx* ctx, uint32_t max_width, uint8_t* buf, size_t cap, og_frame_info* info);
 
 #ifdef __cplusplus
 }

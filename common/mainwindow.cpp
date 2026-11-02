@@ -119,6 +119,7 @@ MainWindow::~MainWindow() {
   OgHooks::dialogMenu    = nullptr;
   OgHooks::playerControl = nullptr;
   OgHooks::video         = nullptr;
+  OgHooks::mainWindow    = nullptr;
   GameMusic::inst().stopMusic();
   Gothic::inst().cancelLoading();
   device.waitIdle();
@@ -159,12 +160,59 @@ void MainWindow::setupUi() {
   OgHooks::dialogMenu    = &dialogs;
   OgHooks::playerControl = &player;
   OgHooks::video         = &video;
+  OgHooks::mainWindow    = this;
 
   Gothic::inst().onPrintScreen .bind(&dialogs,&DialogMenu::printScreen);
   Gothic::inst().onPrint       .bind(&dialogs,&DialogMenu::print);
 
   Gothic::inst().onIntroChapter.bind(&chapter, &ChapterScreen::show);
   Gothic::inst().onShowDocument.bind(&document,&DocumentMenu::show);
+  }
+
+Tempest::Size MainWindow::ogCaptureSize(uint32_t maxWidth) const {
+  const uint32_t w = swapchain.w();
+  const uint32_t h = swapchain.h();
+  if(w==0 || h==0)
+    return Size(0,0);
+  if(maxWidth==0 || w<=maxWidth)
+    return Size(int(w),int(h));
+  const uint64_t sh = (uint64_t(h)*maxWidth + w/2)/w;
+  return Size(int(maxWidth),int(std::max<uint64_t>(sh,1)));
+  }
+
+Tempest::Pixmap MainWindow::ogCaptureFrame(uint32_t maxWidth) {
+  const Size dst = ogCaptureSize(maxWidth);
+  if(dst.isEmpty())
+    return Pixmap();
+
+  device.waitIdle();
+  // uiMesh[cmdId] is about to be refilled by this frame; the previous slot holds the
+  // UI of the last frame on screen. Both are free after waitIdle.
+  const uint8_t prev = uint8_t((cmdId+Resources::MaxFramesInFlight-1)%Resources::MaxFramesInFlight);
+  auto full = device.attachment(TextureFormat::RGBA8,swapchain.w(),swapchain.h());
+  auto lres = Attachment();
+  if(uint32_t(dst.w)!=full.w() || uint32_t(dst.h)!=full.h())
+    lres = device.attachment(TextureFormat::RGBA8,uint32_t(dst.w),uint32_t(dst.h));
+
+  CommandBuffer cmd;
+  {
+  auto enc = cmd.startEncoding(device);
+  renderer.draw(full,enc,cmdId,uiMesh[prev],numMesh[prev],inventory,video);
+  if(!lres.isEmpty()) {
+    // box filter, as for save previews (saveGame)
+    enc.setDebugMarker("og_capture_frame downscale");
+    enc.setFramebuffer({{lres, Vec4(), Tempest::Preserve}});
+    enc.setPushData(IVec2(lres.w(), lres.h()));
+    enc.setBinding(0, full, Sampler::nearest());
+    enc.setPipeline(Shaders::inst().downscale);
+    enc.draw(nullptr, 0, 3);
+    }
+  }
+  auto sync = device.submit(cmd);
+  sync.wait();
+
+  auto& out = lres.isEmpty() ? full : lres;
+  return device.readPixels(textureCast<const Texture2d&>(out));
   }
 
 void MainWindow::paintEvent(PaintEvent& event) {

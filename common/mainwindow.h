@@ -49,6 +49,14 @@ class MainWindow : public Tempest::Window {
 
     float uiScale() const;
 
+    // opengothic-rs (og_capture_frame): size of a capture, the window size scaled down
+    // to at most maxWidth (0 = no limit); 0x0 while the window has no area.
+    Tempest::Size   ogCaptureSize(uint32_t maxWidth) const;
+    // Draws the current frame again, world and UI as render() draws them, into an
+    // offscreen RGBA8 image of ogCaptureSize(maxWidth) and reads it back. Main thread,
+    // between frames (from OgHooks::onFrame). Waits for the GPU: a stall, not per frame.
+    Tempest::Pixmap ogCaptureFrame(uint32_t maxWidth);
+
   private:
     void paintEvent     (Tempest::PaintEvent& event) override;
     void resizeEvent    (Tempest::SizeEvent & event) override;
