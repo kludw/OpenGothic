@@ -9,10 +9,17 @@
 extern "C" {
 #endif
 
-#define OG_CAPI_VERSION 0
+#define OG_CAPI_VERSION 1
 
 /* Per-frame context; only valid inside the callback that received it. */
 typedef struct og_ctx og_ctx;
+
+/* Levels passed to og_callbacks.on_log. */
+#define OG_LOG_ERROR 1
+#define OG_LOG_WARN  2
+#define OG_LOG_INFO  3
+#define OG_LOG_DEBUG 4
+#define OG_LOG_TRACE 5
 
 typedef struct og_callbacks {
   void* user;
@@ -21,6 +28,15 @@ typedef struct og_callbacks {
    * Must not throw or unwind: on macOS it runs inside a dispatch block, so nothing
    * would reach og_run's catch (a Rust host wraps it in catch_unwind). May be NULL. */
   void (*on_frame)(void* user, og_ctx* ctx);
+  /* Receives OpenGothic's log lines instead of log.txt (Tempest still echoes its own
+   * lines to stdout/stderr; zenkit and dmusic lines only come here).
+   * level is an OG_LOG_* value; source names the logger ("tempest", "zenkit", "dmusic");
+   * msg is one line (Tempest splits lines longer than ~255 bytes into several calls).
+   * Both strings are NUL-terminated and only valid during the call.
+   * Called from any thread, also concurrently, while og_run runs; a call that started
+   * just before og_run returns may still finish after it. Must not throw or unwind.
+   * May be NULL (then OpenGothic writes log.txt as usual). */
+  void (*on_log)(void* user, int level, const char* source, const char* msg);
 } og_callbacks;
 
 /* Runs the game until it exits; blocks. Call once per process, on the main thread.

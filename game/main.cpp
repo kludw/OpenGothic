@@ -25,6 +25,8 @@
 #include "build.h"
 #include "commandline.h"
 #include "og_main.h"
+#include "capi/og_capi.h"
+#include "capi/og_capi_internal.h"
 
 #include <dmusic.h>
 
@@ -69,6 +71,30 @@ static std::unique_ptr<Tempest::AbstractGraphicsApi> mkApi(const CommandLine& g)
 #endif
   }
 
+// opengothic-rs: logger levels for the host sink (keeps warnings as warnings).
+static int zenkitLevel(zenkit::LogLevel lvl) {
+  switch(lvl) {
+    case zenkit::LogLevel::ERROR:   return OG_LOG_ERROR;
+    case zenkit::LogLevel::WARNING: return OG_LOG_WARN;
+    case zenkit::LogLevel::INFO:    return OG_LOG_INFO;
+    case zenkit::LogLevel::DEBUG:   return OG_LOG_DEBUG;
+    case zenkit::LogLevel::TRACE:   return OG_LOG_TRACE;
+    }
+  return OG_LOG_ERROR;
+  }
+
+static int dmusicLevel(DmLogLevel lvl) {
+  switch(lvl) {
+    case DmLogLevel_FATAL:
+    case DmLogLevel_ERROR: return OG_LOG_ERROR;
+    case DmLogLevel_WARN:  return OG_LOG_WARN;
+    case DmLogLevel_INFO:  return OG_LOG_INFO;
+    case DmLogLevel_DEBUG: return OG_LOG_DEBUG;
+    case DmLogLevel_TRACE: return OG_LOG_TRACE;
+    }
+  return OG_LOG_ERROR;
+  }
+
 int og_main(int argc,const char** argv) {
 #if defined(__ANDROID__)
   {
@@ -82,22 +108,35 @@ int og_main(int argc,const char** argv) {
   }
 #endif
 
-  try {
-    static Tempest::WFile logFile("log.txt");
+  // opengothic-rs: a host log sink (og_run with on_log) replaces log.txt.
+  if(OgCapi::hasLogSink()) {
     Tempest::Log::setOutputCallback([](Tempest::Log::Mode mode, const char* text) {
-      logFile.write(text,std::strlen(text));
-      logFile.write("\n",1);
-      if(mode==Tempest::Log::Error)
-        logFile.flush();
+      const int level = mode==Tempest::Log::Error ? OG_LOG_ERROR :
+                        mode==Tempest::Log::Debug ? OG_LOG_DEBUG : OG_LOG_INFO;
+      // Once og_run has returned there is no sink; Tempest already echoed the line
+      // to stdout/stderr, and the process is about to exit (one run per process).
+      OgCapi::log(level,"tempest",text);
       });
-    }
-  catch(...) {
-    Tempest::Log::e("unable to setup logfile - fallback to console log");
+    } else {
+    try {
+      static Tempest::WFile logFile("log.txt");
+      Tempest::Log::setOutputCallback([](Tempest::Log::Mode mode, const char* text) {
+        logFile.write(text,std::strlen(text));
+        logFile.write("\n",1);
+        if(mode==Tempest::Log::Error)
+          logFile.flush();
+        });
+      }
+    catch(...) {
+      Tempest::Log::e("unable to setup logfile - fallback to console log");
+      }
     }
   CrashLog::setup();
 
   zenkit::Logger::set(zenkit::LogLevel::INFO, [] (zenkit::LogLevel lvl, const char* cat, const char* message) {
     (void)cat;
+    if(OgCapi::log(zenkitLevel(lvl),"zenkit",message))
+      return;
     switch (lvl) {
       case zenkit::LogLevel::ERROR:
         Tempest::Log::e("[zenkit] ", message);
@@ -115,6 +154,8 @@ int og_main(int argc,const char** argv) {
       }
     });
   Dm_setLogger(DmLogLevel_INFO, [](void* ctx, DmLogLevel lvl, char const* msg) {
+    if(OgCapi::log(dmusicLevel(lvl),"dmusic",msg))
+      return;
     switch (lvl) {
       case DmLogLevel_FATAL:
       case DmLogLevel_ERROR:
