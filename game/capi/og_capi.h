@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-#define OG_CAPI_VERSION 4
+#define OG_CAPI_VERSION 5
 
 /* Per-frame context; only valid inside the callback that received it. */
 typedef struct og_ctx og_ctx;
@@ -121,6 +121,8 @@ typedef struct og_npc_state {
   int32_t  attitude;  /* OG_ATT_*, towards the player (temporary attitude first) */
   int32_t  hp, hp_max;
   int32_t  in_dialog; /* 1 if talking with the player */
+  int32_t  in_sight;  /* v5: 1 if no wall/landscape blocks the ray from the player's eyes to the
+                       * NPC's centre or head (OpenGothic's free-LOS check, without senses_range) */
 } og_npc_state;
 
 typedef struct og_item_state {
@@ -130,6 +132,7 @@ typedef struct og_item_state {
   uint64_t amount;
   og_vec3  position;
   float    distance;
+  int32_t  in_sight;  /* v5: 1 if no wall/landscape blocks the ray from the player's eyes to the item */
 } og_item_state;
 
 typedef struct og_waypoint_state {

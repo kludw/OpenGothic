@@ -22,6 +22,7 @@
 #include "ui/dialogmenu.h"
 #include "ui/videowidget.h"
 #include "world/objects/item.h"
+#include "physics/dynamicworld.h"
 #include "world/objects/npc.h"
 #include "world/waypoint.h"
 #include "world/world.h"
@@ -73,6 +74,39 @@ struct Near {
 template<class T>
 void sortByDistance(std::vector<Near<T>>& v) {
   std::sort(v.begin(),v.end(),[](const Near<T>& a, const Near<T>& b){ return a.dist<b.dist; });
+  }
+
+// Line of sight from the player's eyes, as Npc::canSeeNpc/canSeeItem test it with a free view
+// (no view cone: the camera turns freely), but not cut off at the player's senses_range; the
+// query's range does that. The rays hit landscape and every C_Object body (static and moving
+// mobs such as doors), not NPCs or items.
+
+// Npc::mapHeadBone() dereferences the skeleton unchecked; NPCs without a visual exist.
+// mapBone() falls back to the body centre then, so the head ray repeats the centre ray.
+Tempest::Vec3 head(const Npc& npc) {
+  return npc.mapBone("BIP01 HEAD");
+  }
+
+bool inSight(const World& w, const Npc& pl, const Npc& npc) {
+  const DynamicWorld& phys = *w.physic();
+  const Tempest::Vec3 eye  = head(pl);
+  // The centre of a dead NPC can end up inside a wall; the head is checked too. Centre is
+  // centerPosition() (the public stand-in for canSeeNpc's private physic.center()).
+  return !phys.ray(eye,npc.centerPosition()).hasCol || !phys.ray(eye,head(npc)).hasCol;
+  }
+
+bool inSight(const World& w, const Npc& pl, const Item& it) {
+  const DynamicWorld& phys = *w.physic();
+  const Tempest::Vec3 eye  = head(pl);
+  const Tempest::Vec3 mid  = it.midPosition();
+  const float         len  = (mid-eye).length();
+  const Tempest::Vec3* box = it.bBox();
+  if(box==nullptr || len<=0.f)
+    return !phys.ray(eye,mid).hasCol;
+  // Stop at the item's own box: its middle can sit inside the table or shelf it lies on.
+  const Tempest::Vec3 dir = (mid-eye)/len;
+  const float         hit = DynamicWorld::rayBox(eye,dir,len,it.transform(),box[0],box[1]);
+  return !phys.ray(eye,eye+dir*hit).hasCol;
   }
 
 bool validQuery(const og_state_query* q) {
@@ -155,6 +189,7 @@ void visit(Gothic& g, World& w, Npc& pl, const og_state_query& q, const og_state
       s.hp        = npc.attribute(ATR_HITPOINTS);
       s.hp_max    = npc.attribute(ATR_HITPOINTSMAX);
       s.in_dialog = g.isNpcInDialog(npc) ? 1 : 0;
+      s.in_sight  = inSight(w,pl,npc) ? 1 : 0;
       v.npc(u,&s);
       }
     }
@@ -178,6 +213,7 @@ void visit(Gothic& g, World& w, Npc& pl, const og_state_query& q, const og_state
       s.amount   = it.count();
       s.position = vec(it.position());
       s.distance = e.dist;
+      s.in_sight = inSight(w,pl,it) ? 1 : 0;
       v.item(u,&s);
       }
     }
