@@ -267,7 +267,10 @@ Gothic::Gothic(GameModDescriptor desc) {
   }
 
 Gothic::~Gothic() {
-  // opengothic-rs: session destructors call Gothic::inst(); destroy them while it is valid
+  // opengothic-rs: session destructors call Gothic::inst(); destroy them while it is valid.
+  // An unfinished load owns a session on loaderTh: wait for it (a joinable thread would terminate).
+  if(loaderTh.joinable())
+    loaderTh.join();
   game.reset();
   pendingGame.reset();
   instance = nullptr;
