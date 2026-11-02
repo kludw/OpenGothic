@@ -19,6 +19,7 @@
 #include <Tempest/Timer>
 #include <Tempest/Swapchain>
 
+#include <deque>
 #include <vector>
 #include <thread>
 
@@ -56,6 +57,18 @@ class MainWindow : public Tempest::Window {
     // offscreen RGBA8 image of ogCaptureSize(maxWidth) and reads it back. Main thread,
     // between frames (from OgHooks::onFrame). Waits for the GPU: a stall, not per frame.
     Tempest::Pixmap ogCaptureFrame(uint32_t maxWidth);
+
+    // opengothic-rs (og_video_*): a frame copied without stalling. Requested before a
+    // frame is drawn, it is copied in the same command buffer and read back once that
+    // frame slot's fence has signalled (MaxFramesInFlight frames later).
+    struct OgVideoFrame {
+      uint64_t             tag = 0;
+      Tempest::Size        size;
+      std::vector<uint8_t> rgba;
+      };
+    void                ogVideoRequest(uint32_t maxWidth, uint64_t tag);
+    const OgVideoFrame* ogVideoPeek() const;
+    void                ogVideoPop();
 
   private:
     void paintEvent     (Tempest::PaintEvent& event) override;
@@ -133,6 +146,22 @@ class MainWindow : public Tempest::Window {
 
     Tempest::Fence         fence   [Resources::MaxFramesInFlight];
     Tempest::CommandBuffer commands[Resources::MaxFramesInFlight];
+
+    struct OgVideoSlot {
+      Tempest::Attachment    full;   // the frame, drawn here instead of the swapchain
+      Tempest::Attachment    image;  // scaled down for the host
+      Tempest::StorageBuffer readback;
+      uint64_t               tag     = 0;
+      bool                   pending = false;
+      };
+    OgVideoSlot              ogVideoSlot[Resources::MaxFramesInFlight];
+    bool                     ogVideoWanted   = false;
+    uint32_t                 ogVideoMaxWidth = 0;
+    uint64_t                 ogVideoTag      = 0;
+    std::deque<OgVideoFrame> ogVideoDone;
+    void                     ogVideoCollect(uint8_t slot);
+    Tempest::Attachment*     ogVideoTarget();
+    void                     ogVideoCopy(Tempest::Encoder<Tempest::CommandBuffer>& enc, Tempest::Attachment& frame);
     uint8_t                cmdId = 0;
 
     Tempest::Texture2d        background;

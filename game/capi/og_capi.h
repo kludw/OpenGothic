@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-#define OG_CAPI_VERSION 7
+#define OG_CAPI_VERSION 8
 
 /* Per-frame context; only valid inside the callback that received it. */
 typedef struct og_ctx og_ctx;
@@ -219,10 +219,11 @@ typedef struct og_watch {
                                  (the NPC addressed the player) */
   uint64_t dialog_choices;    /* hash of the shown choice titles; 0 = no choice menu */
   uint64_t quests;            /* hash of quest topics, statuses and entry counts */
+  int32_t  paused;            /* 1 if the simulation is paused (by anyone), else 0 (v8) */
 } og_watch;
 
 /* Fills *out (OG_STATE_* codes as og_read_state; on NOT_IN_GAME only
- * world_generation is set). Only inside on_frame with its ctx (main thread). */
+ * world_generation and paused are set). Only inside on_frame with its ctx (main thread). */
 int og_read_watch(og_ctx* ctx, og_watch* out);
 
 /* ---- Control (v3) ----------------------------------------------------------- */
@@ -321,7 +322,7 @@ typedef struct og_frame_info {
 #define OG_CAPTURE_TOO_SMALL 2     /* buf is NULL or cap < width*height*4: info is set, nothing drawn */
 #define OG_CAPTURE_BAD_ARGS  (-1)  /* outside on_frame, or info is NULL */
 #define OG_CAPTURE_EXCEPTION (-2)  /* C++ exception (logged) */
-#define OG_CAPTURE_READBACK  (-3)  /* the GPU readback had an unexpected size or format (logged) */
+#define OG_CAPTURE_READBACK  (-3)  /* the GPU readback had an unexpected size or format (logged; og_video_poll drops that copy) */
 
 /* Draws the current frame again offscreen, world and UI as on screen (a playing video
  * included; the world is drawn as of this frame's tick, the UI as last shown), and copies it into buf as RGBA8: rows top to bottom, width*4 bytes each,
@@ -349,6 +350,35 @@ typedef struct og_save_status {
 
 /* Fills *out. Only inside on_frame. OG_CTL_OK or OG_CTL_BAD_ARGS. */
 int og_poll_save(og_ctx* ctx, og_save_status* out);
+
+/* ---- Video frames (v8) ---------------------------------------------------------- */
+
+typedef struct og_video_frame {
+  uint64_t tag;            /* the tag passed to og_video_request */
+  uint32_t width, height;  /* pixels */
+} og_video_frame;
+
+#define OG_VIDEO_NONE 3  /* og_video_poll: no finished frame yet */
+
+/* Asks for a copy of the next frame drawn, world and UI exactly as presented, scaled
+ * down to at most max_width pixels wide like og_capture_frame (0 = no limit). Unlike
+ * og_capture_frame it neither drains the GPU nor draws the world twice: that frame is
+ * drawn offscreen, presented from there and copied in its own command buffer; the copy
+ * becomes available through og_video_poll a few frames later (taking it waits for the
+ * GPU queue to reach it: at most about one frame).
+ * A second request before the next frame is drawn replaces the first (tag included).
+ * No copy is made while the window has no area. OG_CAPTURE_OK, OG_CAPTURE_NO_IMAGE (no
+ * window yet), OG_CAPTURE_BAD_ARGS, OG_CAPTURE_EXCEPTION. Only inside on_frame. */
+int og_video_request(og_ctx* ctx, uint32_t max_width, uint64_t tag);
+
+/* Takes the oldest finished copy into buf as RGBA8 (rows top to bottom, width*4
+ * bytes each, alpha not meaningful) and fills *info: OG_CAPTURE_OK. OG_VIDEO_NONE when
+ * none is finished. OG_CAPTURE_TOO_SMALL (buf NULL or cap < width*height*4): info is
+ * set and the copy stays queued. OG_CAPTURE_READBACK: the copy had the wrong size and
+ * was dropped (logged). OG_CAPTURE_BAD_ARGS, OG_CAPTURE_EXCEPTION as elsewhere. At most
+ * 8 finished copies are kept; older ones are dropped (logged), so poll every frame.
+ * Only inside on_frame. */
+int og_video_poll(og_ctx* ctx, uint8_t* buf, size_t cap, og_video_frame* info);
 
 #ifdef __cplusplus
 }

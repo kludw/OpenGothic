@@ -373,6 +373,7 @@ int og_read_watch(og_ctx* ctx, og_watch* out) {
     *out = og_watch{};
     out->world_generation = OgHooks::worldGeneration;
     Gothic& g  = Gothic::inst();
+    out->paused = g.isPause() ? 1 : 0;
     Npc*    pl = g.player();
     if(g.checkLoading()!=Gothic::LoadState::Idle || g.world()==nullptr || pl==nullptr)
       return OG_STATE_NOT_IN_GAME;

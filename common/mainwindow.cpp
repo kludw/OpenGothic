@@ -215,6 +215,85 @@ Tempest::Pixmap MainWindow::ogCaptureFrame(uint32_t maxWidth) {
   return device.readPixels(textureCast<const Texture2d&>(out));
   }
 
+void MainWindow::ogVideoRequest(uint32_t maxWidth, uint64_t tag) {
+  ogVideoWanted   = true;
+  ogVideoMaxWidth = maxWidth;
+  ogVideoTag      = tag;
+  }
+
+const MainWindow::OgVideoFrame* MainWindow::ogVideoPeek() const {
+  return ogVideoDone.empty() ? nullptr : &ogVideoDone.front();
+  }
+
+void MainWindow::ogVideoPop() {
+  if(!ogVideoDone.empty())
+    ogVideoDone.pop_front();
+  }
+
+void MainWindow::ogVideoCollect(uint8_t slot) {
+  auto& s = ogVideoSlot[slot];
+  if(!s.pending)
+    return;
+  s.pending = false;
+  OgVideoFrame f;
+  f.tag  = s.tag;
+  f.size = Size(int(s.image.w()),int(s.image.h()));
+  f.rgba.resize(size_t(s.image.w())*s.image.h()*4);
+  // The slot's fence has signalled, so the copy is done; Tempest's Metal read still
+  // goes through a blit on the queue and waits for it (up to the other slot's frame).
+  device.readBytes(s.readback,f.rgba.data(),f.rgba.size());
+  // the host polls every frame; a backlog means it stopped, so keep memory bounded
+  constexpr size_t maxDone = 8;
+  if(ogVideoDone.size()>=maxDone) {
+    Log::e("og_video: host does not poll, dropping frame tag ",ogVideoDone.front().tag);
+    ogVideoDone.pop_front();
+    }
+  ogVideoDone.push_back(std::move(f));
+  }
+
+Attachment* MainWindow::ogVideoTarget() {
+  if(!ogVideoWanted)
+    return nullptr;
+  ogVideoWanted = false;
+  const Size dst = ogCaptureSize(ogVideoMaxWidth);
+  if(dst.isEmpty()) {
+    Log::d("og_video: window has no area, frame tag ",ogVideoTag," not copied");
+    return nullptr;
+    }
+  // this slot's previous copy was collected after its fence: its images are free
+  auto& s = ogVideoSlot[cmdId];
+  if(s.full.w()!=swapchain.w() || s.full.h()!=swapchain.h())
+    s.full = device.attachment(TextureFormat::RGBA8,swapchain.w(),swapchain.h());
+  if(s.image.w()!=uint32_t(dst.w) || s.image.h()!=uint32_t(dst.h)) {
+    s.image    = device.attachment(TextureFormat::RGBA8,uint32_t(dst.w),uint32_t(dst.h));
+    s.readback = device.ssbo(BufferHeap::Readback,Uninitialized,size_t(dst.w)*size_t(dst.h)*4);
+    }
+  s.tag     = ogVideoTag;
+  s.pending = true;
+  return &s.full;
+  }
+
+void MainWindow::ogVideoCopy(Encoder<CommandBuffer>& enc, Attachment& frame) {
+  // Swapchain images can't be sampled (no texture behind them in Tempest), so the
+  // frame was drawn into s.full: present it, and scale it down for the host. Same
+  // box filter as ogCaptureFrame (a 1:1 copy at equal size).
+  auto& s = ogVideoSlot[cmdId];
+  enc.setDebugMarker("og_video present");
+  enc.setFramebuffer({{frame, Tempest::Discard, Tempest::Preserve}});
+  enc.setPushData(IVec2(int(frame.w()), int(frame.h())));
+  enc.setBinding(0, s.full, Sampler::nearest());
+  enc.setPipeline(Shaders::inst().downscale);
+  enc.draw(nullptr, 0, 3);
+
+  enc.setDebugMarker("og_video frame copy");
+  enc.setFramebuffer({{s.image, Tempest::Discard, Tempest::Preserve}});
+  enc.setPushData(IVec2(int(s.image.w()), int(s.image.h())));
+  enc.setBinding(0, s.full, Sampler::nearest());
+  enc.setPipeline(Shaders::inst().downscale);
+  enc.draw(nullptr, 0, 3);
+  enc.copy(s.image,0,s.readback,0);
+  }
+
 void MainWindow::paintEvent(PaintEvent& event) {
   Painter p(event);
   auto world = Gothic::inst().world();
@@ -1329,6 +1408,7 @@ void MainWindow::render(){
       return;
       }
     Resources::resetRecycled(cmdId);
+    ogVideoCollect(cmdId);
 
     if(video.isActive()) {
       video.paint(device,cmdId);
@@ -1349,7 +1429,13 @@ void MainWindow::render(){
     CommandBuffer& cmd = commands[cmdId];
     {
     auto enc = cmd.startEncoding(device);
-    renderer.draw(swapchain[swapchain.currentImage()],enc,cmdId,uiMesh[cmdId],numMesh[cmdId],inventory,video);
+    auto& frame = swapchain[swapchain.currentImage()];
+    if(auto* target = ogVideoTarget()) {
+      renderer.draw(*target,enc,cmdId,uiMesh[cmdId],numMesh[cmdId],inventory,video);
+      ogVideoCopy(enc,frame);
+      } else {
+      renderer.draw(frame,enc,cmdId,uiMesh[cmdId],numMesh[cmdId],inventory,video);
+      }
     }
     sync = device.submit(cmd);
     device.present(swapchain);
