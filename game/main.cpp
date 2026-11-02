@@ -24,10 +24,11 @@
 #include "gothic.h"
 #include "build.h"
 #include "commandline.h"
+#include "og_main.h"
 
 #include <dmusic.h>
 
-std::string_view selectDevice(const Tempest::AbstractGraphicsApi& api) {
+static std::string_view selectDevice(const Tempest::AbstractGraphicsApi& api) {
   auto d = api.devices();
 
   static Tempest::Device::Props p;
@@ -44,7 +45,7 @@ std::string_view selectDevice(const Tempest::AbstractGraphicsApi& api) {
   return "";
   }
 
-std::unique_ptr<Tempest::AbstractGraphicsApi> mkApi(const CommandLine& g) {
+static std::unique_ptr<Tempest::AbstractGraphicsApi> mkApi(const CommandLine& g) {
   Tempest::ApiFlags flg = g.isValidationMode() ? Tempest::ApiFlags::Validation : Tempest::ApiFlags::NoFlags;
   switch(g.graphicsApi()) {
     case CommandLine::DirectX12:
@@ -68,7 +69,7 @@ std::unique_ptr<Tempest::AbstractGraphicsApi> mkApi(const CommandLine& g) {
 #endif
   }
 
-int main(int argc,const char** argv) {
+int og_main(int argc,const char** argv) {
 #if defined(__ANDROID__)
   {
     auto appdir = InstallDetect::androidInternalDataPath();

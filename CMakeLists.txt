@@ -12,6 +12,8 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_SKIP_RPATH ON)
 
 add_library(${PROJECT_NAME} STATIC)
+# opengothic-rs: created here so it gets the same directory flags as Gothic2Notr (see below)
+add_library(opengothic_core STATIC)
 if(ANDROID)
   add_library(Gothic2Notr SHARED)
   add_library(Spacer SHARED)
@@ -204,11 +206,15 @@ if(IOS)
     XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "iPhone Developer")
 endif()
 
-target_sources(Gothic2Notr PRIVATE game/main.cpp)
+# opengothic-rs: game entry as a library (og_main) so a host program can embed the game
+target_sources(opengothic_core PRIVATE game/main.cpp game/og_main.h)
+target_link_libraries(opengothic_core PUBLIC OpenGothic)
+
+target_sources(Gothic2Notr PRIVATE game/gothic2notr_main.cpp)
 if(WIN32)
   target_sources(Gothic2Notr PRIVATE icon.rc)
 endif()
-target_link_libraries(Gothic2Notr PRIVATE OpenGothic)
+target_link_libraries(Gothic2Notr PRIVATE opengothic_core)
 
 # editor
 target_sources(Spacer PRIVATE ${SPACER_SOURCES} spacer/main.cpp)
