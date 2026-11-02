@@ -267,6 +267,9 @@ Gothic::Gothic(GameModDescriptor desc) {
   }
 
 Gothic::~Gothic() {
+  // opengothic-rs: session destructors call Gothic::inst(); destroy them while it is valid
+  game.reset();
+  pendingGame.reset();
   instance = nullptr;
   }
 
