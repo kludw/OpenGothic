@@ -48,9 +48,13 @@ class DialogMenu : public Tempest::Widget {
       const std::string*                        line    = nullptr;  // nullptr: nobody speaking
       bool                                      lineIsPlayer = false;
       const std::vector<GameScript::DlgChoice>* choices = nullptr;  // nullptr: no menu shown
+      uint64_t                                  starts  = 0;        // dialogs started so far
+      bool                                      important = false;  // last start began with an important info
       };
     OgView ogView() const {
       OgView v;
+      v.starts    = ogStarts;
+      v.important = ogImportant;
       if(state==State::Idle || other==nullptr)
         return v;
       v.partner      = other;
@@ -164,6 +168,9 @@ class DialogMenu : public Tempest::Widget {
     Tempest::SoundEffect                currentSnd;
     bool                                curentIsPl=false;
     bool                                dlgTrade=false;
+    // opengothic-rs: see OgView
+    uint64_t                            ogStarts=0;
+    bool                                ogImportant=false;
     int32_t                             mobsiState=-1;
 
     std::vector<PScreen>                pscreen;

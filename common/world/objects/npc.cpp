@@ -1,5 +1,7 @@
 #include "npc.h"
 
+#include "capi/oghooks.h"
+
 #include <Tempest/Matrix4x4>
 #include <Tempest/Log>
 
@@ -2026,6 +2028,8 @@ void Npc::takeDamage(Npc &other, const Bullet* b) {
                          pose.isDefence(owner.tickCount());
 
   lastHit = &other;
+  ogHits++;
+  ogHitGeneration = OgHooks::worldGeneration;
   if(!isPlayer())
     setOther(&other);
   owner.sendPassivePerc(*this,other,*this,PERC_ASSESSFIGHTSOUND);
@@ -2044,6 +2048,8 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const VisualFx* vfx, int32_t s
 
   lastHitSpell = splId;
   lastHit      = &other;
+  ogHits++;
+  ogHitGeneration = OgHooks::worldGeneration;
   if(!isPlayer())
     setOther(&other);
 

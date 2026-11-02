@@ -1,4 +1,4 @@
-// opengothic-rs: og_read_state (game/capi/og_capi.h) — copies game state out to the host.
+// opengothic-rs: og_read_state and og_read_watch (game/capi/og_capi.h) — copy game state out to the host.
 
 #include "og_capi.h"
 
@@ -77,8 +77,23 @@ void sortByDistance(std::vector<Near<T>>& v) {
 
 bool validQuery(const og_state_query* q) {
   return std::isfinite(q->npc_range)  && q->npc_range>=0 &&
-         std::isfinite(q->item_range) && q->item_range>=0;
+         std::isfinite(q->item_range) && q->item_range>=0 &&
+         (q->sections & ~OG_SECTION_ALL)==0;
   }
+
+// FNV-1a: stable within a process, enough to notice a change between two frames.
+struct Fnv {
+  uint64_t h = 1469598103934665603ull;
+  void bytes(const void* p, size_t n) {
+    auto b = static_cast<const uint8_t*>(p);
+    for(size_t i=0; i<n; ++i) {
+      h ^= b[i];
+      h *= 1099511628211ull;
+      }
+    }
+  void text(std::string_view s) { bytes(s.data(),s.size()); uint8_t z=0; bytes(&z,1); }
+  void u64 (uint64_t v)         { bytes(&v,sizeof(v)); }
+  };
 
 bool validVisitor(const og_state_visitor* v) {
   return v->header && v->player && v->npc && v->item && v->waypoint && v->dialog &&
@@ -116,70 +131,77 @@ void visit(Gothic& g, World& w, Npc& pl, const og_state_query& q, const og_state
   p.dexterity        = pl.attribute(ATR_DEXTERITY);
   v.player(u,&p);
 
-  std::vector<Near<Npc>> npcs;
-  for(uint32_t i=0, n=w.npcCount(); i<n; ++i) {
-    Npc* npc = w.npcById(i);
-    if(npc==nullptr || npc==&pl)
-      continue;
-    const float d = std::sqrt(npc->qDistTo(pl));
-    if(d<=q.npc_range)
-      npcs.push_back({npc,d});
-    }
-  sortByDistance(npcs);
-  for(auto& e:npcs) {
-    Npc& npc = *e.obj;
-    const Attitude tmp = npc.tempAttitude();
-    og_npc_state s = {};
-    s.id        = ids.npc(npc);
-    s.name      = str(npc.displayName());
-    s.guild     = str(guildName(script,int32_t(npc.guild())));
-    s.position  = vec(npc.position());
-    s.distance  = e.dist;
-    s.attitude  = tmp!=ATT_NULL ? tmp : script.personAttitude(npc,pl);
-    s.hp        = npc.attribute(ATR_HITPOINTS);
-    s.hp_max    = npc.attribute(ATR_HITPOINTSMAX);
-    s.in_dialog = g.isNpcInDialog(npc) ? 1 : 0;
-    v.npc(u,&s);
+  if(q.sections & OG_SECTION_NPCS) {
+    std::vector<Near<Npc>> npcs;
+    for(uint32_t i=0, n=w.npcCount(); i<n; ++i) {
+      Npc* npc = w.npcById(i);
+      if(npc==nullptr || npc==&pl)
+        continue;
+      const float d = std::sqrt(npc->qDistTo(pl));
+      if(d<=q.npc_range)
+        npcs.push_back({npc,d});
+      }
+    sortByDistance(npcs);
+    for(auto& e:npcs) {
+      Npc& npc = *e.obj;
+      const Attitude tmp = npc.tempAttitude();
+      og_npc_state s = {};
+      s.id        = ids.npc(npc);
+      s.name      = str(npc.displayName());
+      s.guild     = str(guildName(script,int32_t(npc.guild())));
+      s.position  = vec(npc.position());
+      s.distance  = e.dist;
+      s.attitude  = tmp!=ATT_NULL ? tmp : script.personAttitude(npc,pl);
+      s.hp        = npc.attribute(ATR_HITPOINTS);
+      s.hp_max    = npc.attribute(ATR_HITPOINTSMAX);
+      s.in_dialog = g.isNpcInDialog(npc) ? 1 : 0;
+      v.npc(u,&s);
+      }
     }
 
   const Tempest::Vec3 plPos = pl.position();
-  std::vector<Near<Item>> items;
-  for(uint32_t i=0; Item* it=w.itmById(i); ++i) {
-    const float d = (it->position()-plPos).length();
-    if(d<=q.item_range)
-      items.push_back({it,d});
-    }
-  sortByDistance(items);
-  for(auto& e:items) {
-    Item& it = *e.obj;
-    og_item_state s = {};
-    s.id       = ids.item(it);
-    s.instance = str(instanceName(script,it.clsId()));
-    s.name     = str(it.displayName());
-    s.amount   = it.count();
-    s.position = vec(it.position());
-    s.distance = e.dist;
-    v.item(u,&s);
+
+  if(q.sections & OG_SECTION_ITEMS) {
+    std::vector<Near<Item>> items;
+    for(uint32_t i=0; Item* it=w.itmById(i); ++i) {
+      const float d = (it->position()-plPos).length();
+      if(d<=q.item_range)
+        items.push_back({it,d});
+      }
+    sortByDistance(items);
+    for(auto& e:items) {
+      Item& it = *e.obj;
+      og_item_state s = {};
+      s.id       = ids.item(it);
+      s.instance = str(instanceName(script,it.clsId()));
+      s.name     = str(it.displayName());
+      s.amount   = it.count();
+      s.position = vec(it.position());
+      s.distance = e.dist;
+      v.item(u,&s);
+      }
     }
 
-  // No public waypoint list: a filter that never accepts visits every waynet point.
-  std::vector<Near<const WayPoint>> wps;
-  w.findWayPoint(plPos,[&](const WayPoint& wp) {
-    wps.push_back({&wp,(wp.position()-plPos).length()});
-    return false;
-    });
-  const size_t nWp = std::min<size_t>(wps.size(),q.max_waypoints);
-  std::partial_sort(wps.begin(),wps.begin()+ptrdiff_t(nWp),wps.end(),
-                    [](const Near<const WayPoint>& a, const Near<const WayPoint>& b){ return a.dist<b.dist; });
-  for(size_t i=0; i<nWp; ++i) {
-    og_waypoint_state s = {};
-    s.name     = str(wps[i].obj->name);
-    s.position = vec(wps[i].obj->position());
-    s.distance = wps[i].dist;
-    v.waypoint(u,&s);
+  if(q.sections & OG_SECTION_WAYPOINTS) {
+    // No public waypoint list: a filter that never accepts visits every waynet point.
+    std::vector<Near<const WayPoint>> wps;
+    w.findWayPoint(plPos,[&](const WayPoint& wp) {
+      wps.push_back({&wp,(wp.position()-plPos).length()});
+      return false;
+      });
+    const size_t nWp = std::min<size_t>(wps.size(),q.max_waypoints);
+    std::partial_sort(wps.begin(),wps.begin()+ptrdiff_t(nWp),wps.end(),
+                      [](const Near<const WayPoint>& a, const Near<const WayPoint>& b){ return a.dist<b.dist; });
+    for(size_t i=0; i<nWp; ++i) {
+      og_waypoint_state s = {};
+      s.name     = str(wps[i].obj->name);
+      s.position = vec(wps[i].obj->position());
+      s.distance = wps[i].dist;
+      v.waypoint(u,&s);
+      }
     }
 
-  if(OgHooks::dialogMenu!=nullptr) {
+  if((q.sections & OG_SECTION_DIALOG) && OgHooks::dialogMenu!=nullptr) {
     const DialogMenu::OgView dlg = OgHooks::dialogMenu->ogView();
     if(dlg.partner!=nullptr) {
       og_dialog_state s = {};
@@ -206,19 +228,22 @@ void visit(Gothic& g, World& w, Npc& pl, const og_state_query& q, const og_state
       }
     }
 
-  // Side effect: iterator() sorts the inventory (as the inventory UI does); scripts that
-  // walk it by slot can see a different order after a read.
-  for(auto i=pl.inventory().iterator(Inventory::T_Inventory); i.isValid(); ++i) {
-    const Item& it = *i;
-    og_inventory_item_state s = {};
-    s.instance = str(instanceName(script,it.clsId()));
-    s.name     = str(it.displayName());
-    s.amount   = i.count();
-    s.equipped = i.isEquipped() ? 1 : 0;
-    v.inventory_item(u,&s);
+  if(q.sections & OG_SECTION_INVENTORY) {
+    // Side effect: iterator() sorts the inventory (as the inventory UI does); scripts that
+    // walk it by slot can see a different order after a read.
+    for(auto i=pl.inventory().iterator(Inventory::T_Inventory); i.isValid(); ++i) {
+      const Item& it = *i;
+      og_inventory_item_state s = {};
+      s.instance = str(instanceName(script,it.clsId()));
+      s.name     = str(it.displayName());
+      s.amount   = i.count();
+      s.equipped = i.isEquipped() ? 1 : 0;
+      v.inventory_item(u,&s);
+      }
     }
 
-  if(const QuestLog* log = g.questLog()) {
+  const QuestLog* log = g.questLog();
+  if((q.sections & OG_SECTION_QUESTS) && log!=nullptr) {
     for(size_t i=0; i<log->questCount(); ++i) {
       const auto& quest = log->quest(i);
       og_quest_state s = {};
@@ -229,6 +254,49 @@ void visit(Gothic& g, World& w, Npc& pl, const og_state_query& q, const og_state
       for(const auto& entry:quest.entry)
         v.quest_entry(u,str(entry));
       }
+    }
+  }
+
+void watch(Gothic& g, Npc& pl, og_watch& out) {
+  out.hp    = pl.attribute(ATR_HITPOINTS);
+  out.level = pl.level();
+  out.dead  = pl.isDead() ? 1 : 0;
+  out.hits  = pl.ogHitCount();
+  // lastHit may point into an earlier world (freed): only trusted for hits in this one.
+  if(const Npc* by = pl.ogLastHit(); by!=nullptr && pl.ogLastHitGeneration()==OgHooks::worldGeneration)
+    out.last_attacker = ids.npc(*by);
+
+  if(OgHooks::dialogMenu!=nullptr) {
+    const DialogMenu::OgView dlg = OgHooks::dialogMenu->ogView();
+    out.dialog_starts    = dlg.starts;
+    out.dialog_important = dlg.important ? 1 : 0;
+    if(dlg.partner!=nullptr)
+      out.dialog_partner = ids.npc(*dlg.partner);
+    if(dlg.choices!=nullptr) {
+      Fnv h;
+      size_t shown = 0;
+      for(const auto& c:*dlg.choices) {
+        if(c.title.empty())
+          continue;
+        h.text(c.title);
+        shown++;
+        }
+      // Hash 0 means "no menu"; a shown menu must never map to it.
+      if(shown>0)
+        out.dialog_choices = h.h!=0 ? h.h : 1;
+      }
+    }
+
+  if(const QuestLog* log = g.questLog()) {
+    Fnv h;
+    h.u64(log->questCount());
+    for(size_t i=0; i<log->questCount(); ++i) {
+      const auto& quest = log->quest(i);
+      h.text(quest.name);
+      h.u64(uint64_t(quest.status));
+      h.u64(quest.entry.size());
+      }
+    out.quests = h.h;
     }
   }
 }
@@ -256,6 +324,31 @@ int og_read_state(og_ctx* ctx, const og_state_query* q, const og_state_visitor* 
     }
   catch(...) {
     Tempest::Log::e("og_read_state: unknown exception");
+    }
+  return OG_STATE_EXCEPTION;
+  }
+
+int og_read_watch(og_ctx* ctx, og_watch* out) {
+  try {
+    if(ctx==nullptr || !ctx->inFrame || out==nullptr) {
+      Tempest::Log::e("og_read_watch: called outside on_frame or without output");
+      return OG_STATE_BAD_ARGS;
+      }
+    *out = og_watch{};
+    out->world_generation = OgHooks::worldGeneration;
+    Gothic& g  = Gothic::inst();
+    Npc*    pl = g.player();
+    if(g.checkLoading()!=Gothic::LoadState::Idle || g.world()==nullptr || pl==nullptr)
+      return OG_STATE_NOT_IN_GAME;
+    ids.sync();
+    watch(g,*pl,*out);
+    return OG_STATE_OK;
+    }
+  catch(const std::exception& e) {
+    Tempest::Log::e("og_read_watch: exception: ",e.what());
+    }
+  catch(...) {
+    Tempest::Log::e("og_read_watch: unknown exception");
     }
   return OG_STATE_EXCEPTION;
   }

@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-#define OG_CAPI_VERSION 3
+#define OG_CAPI_VERSION 4
 
 /* Per-frame context; only valid inside the callback that received it. */
 typedef struct og_ctx og_ctx;
@@ -72,10 +72,20 @@ typedef struct og_vec3 {
   float x, y, z;
 } og_vec3;
 
+/* og_state_query.sections (v4): which parts after header and player are visited. */
+#define OG_SECTION_NPCS      0x01u
+#define OG_SECTION_ITEMS     0x02u
+#define OG_SECTION_WAYPOINTS 0x04u
+#define OG_SECTION_DIALOG    0x08u
+#define OG_SECTION_INVENTORY 0x10u
+#define OG_SECTION_QUESTS    0x20u
+#define OG_SECTION_ALL       0x3Fu
+
 typedef struct og_state_query {
   float    npc_range;      /* cm; NPCs farther from the player are not visited */
   float    item_range;     /* cm; same for items lying in the world */
   uint32_t max_waypoints;  /* nearest waynet points to visit */
+  uint32_t sections;       /* OG_SECTION_* mask; unknown bits are BAD_ARGS */
 } og_state_query;
 
 typedef struct og_state_header {
@@ -188,6 +198,29 @@ typedef struct og_state_visitor {
 /* Visits the current game state. Only inside on_frame with its ctx (main thread).
  * Reading the inventory sorts it, as opening the inventory UI does. */
 int og_read_state(og_ctx* ctx, const og_state_query* q, const og_state_visitor* v);
+
+/* ---- Watching for events (v4) ----------------------------------------------- */
+
+/* Cheap per-frame values the host diffs to detect events. Counters and hashes are
+ * only meaningful compared with an earlier read of the same world_generation. */
+typedef struct og_watch {
+  uint64_t world_generation;  /* changes when a world load starts; ids restart then */
+  int32_t  hp;                /* player hit points */
+  int32_t  level;             /* player experience level */
+  int32_t  dead;              /* 1 if the player is dead (not just knocked down) */
+  uint32_t hits;              /* times the player was hit, blocked hits included (wraps) */
+  uint32_t last_attacker;     /* NPC id of the last hitter in this world; 0 = none */
+  uint32_t dialog_partner;    /* NPC id of the dialog partner; 0 = no dialog */
+  uint64_t dialog_starts;     /* dialogs opened since the process started */
+  int32_t  dialog_important;  /* 1 if the last opened dialog began with an important info
+                                 (the NPC addressed the player) */
+  uint64_t dialog_choices;    /* hash of the shown choice titles; 0 = no choice menu */
+  uint64_t quests;            /* hash of quest topics, statuses and entry counts */
+} og_watch;
+
+/* Fills *out (OG_STATE_* codes as og_read_state; on NOT_IN_GAME only
+ * world_generation is set). Only inside on_frame with its ctx (main thread). */
+int og_read_watch(og_ctx* ctx, og_watch* out);
 
 /* ---- Control (v3) ----------------------------------------------------------- */
 

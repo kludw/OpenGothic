@@ -270,6 +270,12 @@ bool DialogMenu::hasContent() const {
 
 bool DialogMenu::onStart(Npc &p, Npc &ot) {
   choice         = ot.dialogChoices(p,except,state==State::PreStart);
+  // opengothic-rs: onStart also runs when a sub-dialog ends; only PreStart opens a dialog.
+  // An untitled first choice is an important info: the NPC speaks first.
+  if(state==State::PreStart) {
+    ogStarts++;
+    ogImportant = choice.size()>0 && choice[0].title.size()==0;
+    }
   state          = State::Active;
   depth          = 0;
   curentIsPl     = true;

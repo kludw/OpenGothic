@@ -398,6 +398,11 @@ class Npc final {
 
     void      clearNearestEnemy();
     int32_t   lastHitSpellId() const { return lastHitSpell; }
+    // opengothic-rs: for the C seam's events. The hitter is only safe to use while
+    // ogLastHitGeneration() equals OgHooks::worldGeneration (NPCs live as long as their world).
+    uint32_t  ogHitCount()          const { return ogHits; }
+    const Npc* ogLastHit()          const { return lastHit; }
+    uint64_t  ogLastHitGeneration() const { return ogHitGeneration; }
 
     void      setOther(Npc* ot);
     void      setVictim(Npc* ot);
@@ -582,6 +587,8 @@ class Npc final {
     Npc*                           lastHit          = nullptr;
     char                           lastHitType      = 'A';
     int32_t                        lastHitSpell     = 0;
+    uint32_t                       ogHits           = 0;
+    uint64_t                       ogHitGeneration  = 0;
 
     // spell cast
     CastState                      castLevel        = CS_NoCast;
