@@ -48,16 +48,26 @@ class Inventory final {
 
       private:
         Iterator(IteratorType t, const Inventory* owner);
+        Iterator(IteratorType t, const Inventory* owner, std::vector<const Item*> view);
         void skipHidden();
+        const Item& cur(size_t i) const;
+        size_t      size() const;
 
         IteratorType     type  = T_Inventory;
         const Inventory* owner = nullptr;
         size_t           at    = 0;
         size_t           subId = 0;
+        // opengothic-rs: ogSnapshot is set for ogIterator(): ogView is a sorted copy,
+        // the live order stays.
+        bool                     ogSnapshot = false;
+        std::vector<const Item*> ogView;
       friend class Inventory;
       };
 
     Iterator     iterator(IteratorType t) const;
+    // opengothic-rs: iterator() in the same (sorted) order, without sorting the live
+    // inventory: a seam read must not change the slot order scripts see (task 5.7).
+    Iterator     ogIterator(IteratorType t) const;
     // opengothic-rs: the items in storage order, without sorting them (iterator() sorts),
     // for the world trace (task 5.5). The order changes when anything sorts.
     auto         ogItems() const -> const std::vector<std::unique_ptr<Item>>& { return items; }

@@ -328,7 +328,7 @@ void closeTrade() {
 // inventory (Npc::sellItem unequips what it sells).
 size_t tradeable(const Inventory& inv, size_t cls) {
   size_t n = 0;
-  for(auto i=inv.iterator(Inventory::T_Trade); i.isValid(); ++i)
+  for(auto i=inv.ogIterator(Inventory::T_Trade); i.isValid(); ++i)
     if((*i).clsId()==cls)
       n += i.count();
   return n;
@@ -554,7 +554,7 @@ const Item* worldMap(World& w, Npc& pl, size_t& cls, std::string& name, std::str
   const std::string exact = "ITWR_MAP_"+stem;
   const Item* best = nullptr;
   int         rank = 0;
-  for(auto i=pl.inventory().iterator(Inventory::T_Inventory); i.isValid(); ++i) {
+  for(auto i=pl.inventory().ogIterator(Inventory::T_Inventory); i.isValid(); ++i) {
     const Item& it = *i;
     auto* sym = w.script().findSymbol(it.clsId());
     if(sym==nullptr || (uint32_t(it.handle().main_flag) & ITM_CAT_DOCS)==0)

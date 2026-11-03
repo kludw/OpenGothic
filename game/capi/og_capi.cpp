@@ -205,6 +205,10 @@ int og_step_fixed(og_ctx* c, uint32_t dtMs, og_clock* clockOut) {
     return OG_STEP_BAD_DT;
     }
   return guarded("og_step_fixed",[dtMs,clockOut]{
+    if(!OgHooks::serialAnimation) {
+      OgHooks::serialAnimation = true;
+      Tempest::Log::i("og_step_fixed: deterministic mode, animation update runs serially");
+      }
     const uint64_t advanced = OgMain::window(*engine).ogStepFixed(dtMs);
     if(clockOut!=nullptr) {
       *clockOut = og_clock{};

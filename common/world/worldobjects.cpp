@@ -15,6 +15,7 @@
 #include "utils/workers.h"
 #include "utils/dbgpainter.h"
 #include "gothic.h"
+#include "capi/oghooks.h"
 
 #include <Tempest/Painter>
 #include <Tempest/Application>
@@ -431,6 +432,13 @@ void WorldObjects::updateAnimation(uint64_t dt) {
     return;
   if(dt==0)
     return;
+  if(OgHooks::serialAnimation) {
+    for(auto& i:npcArr)
+      i->updateAnimation(dt);
+    for(Interactive* i:interactiveObj)
+      i->updateAnimation(dt);
+    return;
+    }
   Workers::parallelTasks(npcArr,[dt](std::unique_ptr<Npc>& i){
     i->updateAnimation(dt);
     });

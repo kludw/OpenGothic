@@ -40,4 +40,8 @@ namespace OgHooks {
   // drops real keyboard and mouse input.
   extern void  (*onPlayerInput)(int kind, int action, int key, int mapping, float dx, float dy);
   extern bool    inputReplay;
+  // Deterministic mode (task 5.7), set by og_step_fixed: WorldObjects::updateAnimation runs
+  // NPCs and mobsi one by one in list order instead of on worker threads, because animation
+  // events write shared world state (sounds, hits, item drops) in thread order.
+  extern bool    serialAnimation;
   }

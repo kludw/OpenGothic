@@ -2,6 +2,8 @@
 
 #include <Tempest/Log>
 
+#include <algorithm>
+
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
 #include "world/objects/interactive.h"
@@ -12,28 +14,36 @@
 
 using namespace Tempest;
 
+const Item& Inventory::Iterator::cur(size_t i) const {
+  return ogSnapshot ? *ogView[i] : *owner->items[i];
+  }
+
+size_t Inventory::Iterator::size() const {
+  return ogSnapshot ? ogView.size() : owner->items.size();
+  }
+
 const Item& Inventory::Iterator::operator*() const {
-  return *owner->items[at];
+  return cur(at);
   }
 
 const Item* Inventory::Iterator::operator ->() const {
-  return owner->items[at].get();
+  return &cur(at);
   }
 
 bool Inventory::Iterator::isEquipped() const {
-  auto& cur = *owner->items[at];
+  auto& cur = this->cur(at);
   if(!cur.isMulti())
     return subId<cur.equipCount();
   return subId==0 && cur.isEquipped();
   }
 
 uint8_t Inventory::Iterator::slot() const {
-  auto& cur = *owner->items[at];
+  auto& cur = this->cur(at);
   return subId==0 ? cur.slot() : Item::NSLOT;
   }
 
 size_t Inventory::Iterator::count() const {
-  auto& cur = *owner->items[at];
+  auto& cur = this->cur(at);
   if(!cur.isMulti()) {
     // each equipped item is shown separately
     if(subId<cur.equipCount())
@@ -44,8 +54,7 @@ size_t Inventory::Iterator::count() const {
   }
 
 Inventory::Iterator& Inventory::Iterator::operator++() {
-  auto& it  = owner->items;
-  auto& cur = *it[at];
+  auto& cur = this->cur(at);
   if(!cur.isMulti()) {
     const size_t cnt = cur.equipCount() + (cur.count()>cur.equipCount() ? 1 : 0);
     if(subId+1<cnt) {
@@ -60,7 +69,7 @@ Inventory::Iterator& Inventory::Iterator::operator++() {
   }
 
 bool Inventory::Iterator::isValid() const {
-  return at<owner->items.size();
+  return at<size();
   }
 
 Inventory::Iterator::Iterator(Inventory::IteratorType t, const Inventory* owner)
@@ -69,14 +78,18 @@ Inventory::Iterator::Iterator(Inventory::IteratorType t, const Inventory* owner)
   skipHidden();
   }
 
+Inventory::Iterator::Iterator(Inventory::IteratorType t, const Inventory* owner, std::vector<const Item*> view)
+  :type(t), owner(owner), ogSnapshot(true), ogView(std::move(view)) {
+  skipHidden();
+  }
+
 void Inventory::Iterator::skipHidden() {
-  auto& it = owner->items;
   if(type==T_Trade) {
-    while(at<it.size() && (it[at]->isEquipped() || it[at]->isGold()))
+    while(at<size() && (cur(at).isEquipped() || cur(at).isGold()))
       ++at;
     }
   if(type==T_Ransack) {
-    while(at<it.size() && it[at]->isEquipped()) {
+    while(at<size() && cur(at).isEquipped()) {
       ++at;
       }
     }
@@ -192,6 +205,18 @@ void Inventory::save(Serialize &fout) const {
 
 Inventory::Iterator Inventory::iterator(IteratorType t) const {
   return Iterator(t,this);
+  }
+
+Inventory::Iterator Inventory::ogIterator(IteratorType t) const {
+  std::vector<const Item*> view;
+  view.reserve(items.size());
+  for(auto& i:items)
+    view.push_back(i.get());
+  // Stable: equal keys keep storage order, so the result depends only on the live order.
+  std::stable_sort(view.begin(),view.end(),[](const Item* l, const Item* r){
+    return less(*l,*r);
+    });
+  return Iterator(t,this,std::move(view));
   }
 
 int32_t Inventory::priceOf(size_t cls) const {

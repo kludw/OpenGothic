@@ -256,9 +256,9 @@ void visit(Gothic& g, World& w, Npc& pl, const og_state_query& q, const og_state
     }
 
   if(q.sections & OG_SECTION_INVENTORY) {
-    // Side effect: iterator() sorts the inventory (as the inventory UI does); scripts that
-    // walk it by slot can see a different order after a read.
-    for(auto i=pl.inventory().iterator(Inventory::T_Inventory); i.isValid(); ++i) {
+    // ogIterator: the inventory UI's order without sorting the live inventory, so a read
+    // doesn't change what scripts see by slot (determinism.md #14).
+    for(auto i=pl.inventory().ogIterator(Inventory::T_Inventory); i.isValid(); ++i) {
       const Item& it = *i;
       og_inventory_item_state s = {};
       s.instance = str(instanceName(script,it.clsId()));
@@ -295,7 +295,7 @@ void visit(Gothic& g, World& w, Npc& pl, const og_state_query& q, const og_state
     const std::pair<const Npc*,int32_t> sides[] = {{tr,OG_TRADE_SIDE_TRADER},{&pl,OG_TRADE_SIDE_PLAYER}};
     for(const auto& [npc,side]:sides) {
       const auto type = side==OG_TRADE_SIDE_TRADER ? Inventory::T_Trade : Inventory::T_Inventory;
-      for(auto i=npc->inventory().iterator(type); i.isValid(); ++i) {
+      for(auto i=npc->inventory().ogIterator(type); i.isValid(); ++i) {
         const Item& it = *i;
         if(it.isGold())
           continue;

@@ -15,3 +15,4 @@ bool     OgHooks::hostFightsForPlayer = false;
 int32_t  OgHooks::playerFightTactic   = 0;
 void   (*OgHooks::onPlayerInput)(int,int,int,int,float,float) = nullptr;
 bool     OgHooks::inputReplay         = false;
+bool     OgHooks::serialAnimation     = false;
