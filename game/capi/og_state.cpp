@@ -116,19 +116,7 @@ bool validQuery(const og_state_query* q) {
          (q->sections & ~OG_SECTION_ALL)==0;
   }
 
-// FNV-1a: stable within a process, enough to notice a change between two frames.
-struct Fnv {
-  uint64_t h = 1469598103934665603ull;
-  void bytes(const void* p, size_t n) {
-    auto b = static_cast<const uint8_t*>(p);
-    for(size_t i=0; i<n; ++i) {
-      h ^= b[i];
-      h *= 1099511628211ull;
-      }
-    }
-  void text(std::string_view s) { bytes(s.data(),s.size()); uint8_t z=0; bytes(&z,1); }
-  void u64 (uint64_t v)         { bytes(&v,sizeof(v)); }
-  };
+using Fnv = OgFnv;
 
 bool validVisitor(const og_state_visitor* v) {
   return v->header && v->player && v->npc && v->item && v->waypoint && v->dialog &&

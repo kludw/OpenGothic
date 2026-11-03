@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-#define OG_CAPI_VERSION 16
+#define OG_CAPI_VERSION 17
 
 /* Per-frame context; only valid inside the callback that received it. Exception (v14):
  * og_init's context is also the handle for the loop functions until og_shutdown. */
@@ -558,6 +558,58 @@ typedef struct og_rng_info {
 /* Reads one stream's counters: OG_CTL_OK, or OG_CTL_BAD_ARGS (stream >= OG_RNG_STREAMS,
  * NULL out). Any thread, any time, also before og_init and after og_shutdown. */
 int og_rng_read(uint32_t stream, og_rng_info* out);
+
+/* ---- World trace (v17) ------------------------------------------------------
+ * The simulation state a deterministic run must reproduce, read once per step by the
+ * host (task 5.5, ADR 0021). Reading changes nothing: no seam ids are handed out, the
+ * inventory is not sorted. Hashes are FNV-1a 64 and only comparable within one binary
+ * and one game script. */
+
+typedef struct og_trace_header {
+  og_clock clock;          /* as og_step_fixed's; in_session is 1 */
+  uint32_t npc_count;      /* og_trace_npc records that follow */
+  uint32_t item_count;     /* items lying in the world */
+  uint64_t items_hash;     /* over world items in world order: instance symbol, amount, position bits */
+  uint32_t quest_count;
+  uint64_t quests_hash;    /* over quests in log order: topic, section, status, entry texts */
+  uint32_t global_count;   /* script variables hashed */
+  uint64_t globals_hash;   /* over the game script's non-const, non-member int/float/string
+                              variables (function locals included), in symbol order: index, values */
+} og_trace_header;
+
+typedef struct og_trace_npc {
+  uint32_t index;          /* position in the world's NPC list; target refers to it */
+  og_str   instance;       /* script instance symbol name, e.g. "PC_HERO" */
+  int32_t  player;         /* 1 for the player */
+  og_vec3  position;
+  float    yaw;            /* og_player_state.heading_deg */
+  uint32_t body_state;     /* Gothic's BS_* value, modifier and flag bits included */
+  og_str   ai_state;       /* the AI state's start function (ZS_*); empty without one */
+  uint32_t queue_length;   /* actions in the AI queue */
+  uint32_t queue_head;     /* the next queued action (OpenGothic's Action enum); 0 = none */
+  int32_t  hp, hp_max, mana, mana_max;
+  int32_t  weapon_state;   /* 0 none, 1 fist, 2 one-handed, 3 two-handed, 4 bow, 5 crossbow, 6 magic */
+  uint32_t target;         /* index of the NPC's current target; UINT32_MAX = none (or a
+                              target no longer in the world's list) */
+  int32_t  walk_mode;      /* 0 run, 1 walk, 2 sneak; replaced by 4 water, 8 swim, 16 dive */
+  uint32_t inventory_count;  /* item stacks (rows) in the NPC's inventory */
+  uint64_t inventory_hash;   /* order-independent (wrapping sum over stacks of FNV-1a 64 of
+                                instance symbol, amount, equipped count): reading or sorting
+                                the inventory does not change it */
+} og_trace_npc;
+
+/* Both callbacks non-NULL; they must not throw or unwind. Strings as in og_read_state. */
+typedef struct og_trace_visitor {
+  void* user;
+  void (*header)(void* user, const og_trace_header* h);
+  void (*npc)   (void* user, const og_trace_npc* n);  /* every NPC in the world, in index order */
+} og_trace_visitor;
+
+/* Visits the header, then every NPC of the loaded world (removed ones excluded).
+ * OG_STATE_OK, OG_STATE_NOT_IN_GAME (no world or player, loading, saving: nothing
+ * visited), OG_STATE_BAD_ARGS (outside on_frame, bad visitor), OG_STATE_EXCEPTION
+ * (logged; the visit may be partial). Only inside on_frame with its ctx (main thread). */
+int og_read_world_trace(og_ctx* ctx, const og_trace_visitor* v);
 
 #ifdef __cplusplus
 }

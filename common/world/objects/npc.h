@@ -408,6 +408,10 @@ class Npc final {
     // ran out of moves (as ZS_Attack's loop does); a queued action stops implAttack.
     bool      ogHasFightMoves() const { return fghAlgo.hasInstructions(); }
     void      ogClearFightMoves()     { fghAlgo.onClearTarget(); }
+    // opengothic-rs: read-only views for the world trace (og_read_world_trace, task 5.5).
+    size_t    ogAiStateFunc()   const { return aiState.funcIni.ptr; }
+    size_t    ogAiQueueSize()   const { return aiQueue.size(); }
+    Action    ogAiQueueHead()   const { return aiQueue.ogHead(); }
 
     void      setOther(Npc* ot);
     void      setVictim(Npc* ot);

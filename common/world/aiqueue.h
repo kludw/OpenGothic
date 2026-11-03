@@ -34,6 +34,8 @@ class AiQueue {
     void     load(Serialize& fin);
 
     size_t   size() const { return aiActions.size(); }
+    // opengothic-rs: the next action to run, for the world trace (task 5.5).
+    Action   ogHead() const { return aiActions.empty() ? AI_None : aiActions.front().act; }
     void     clear();
     void     pushBack (AiAction&& a);
     void     pushFront(AiAction&& a);

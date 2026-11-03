@@ -58,6 +58,9 @@ class Inventory final {
       };
 
     Iterator     iterator(IteratorType t) const;
+    // opengothic-rs: the items in storage order, without sorting them (iterator() sorts),
+    // for the world trace (task 5.5). The order changes when anything sorts.
+    auto         ogItems() const -> const std::vector<std::unique_ptr<Item>>& { return items; }
 
     int32_t      priceOf(size_t item) const;
     int32_t      sellPriceOf(size_t item) const;
