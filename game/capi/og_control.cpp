@@ -1424,7 +1424,7 @@ int og_dev_console(og_ctx* ctx, og_str command) {
     });
   }
 
-// After every call that may start or end an action (UB-30).
+// After every call that may start or end an action (UB-31).
 static int syncWalkHook(int ret) {
   OgHooks::hostWalksPlayer = act.kind!=Kind::None && act.usesAi && act.generation==OgHooks::worldGeneration;
   return ret;
