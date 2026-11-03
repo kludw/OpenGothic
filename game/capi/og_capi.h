@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-#define OG_CAPI_VERSION 14
+#define OG_CAPI_VERSION 15
 
 /* Per-frame context; only valid inside the callback that received it. Exception (v14):
  * og_init's context is also the handle for the loop functions until og_shutdown. */
@@ -93,6 +93,25 @@ int og_wait_display(og_ctx* ctx, uint32_t timeout_ms);
  * frame and so does this), OG_RUN_EXCEPTION, or OG_LOOP_BAD_STATE. */
 int og_step(og_ctx* ctx, uint32_t dt_ms);
 
+/* The session clock after a step (v15). */
+typedef struct og_clock {
+  int32_t  in_session;        /* 1 if a game session exists; else the fields below are 0 */
+  uint64_t world_generation;  /* as og_watch.world_generation */
+  uint64_t session_ticks;     /* GameSession::tickCount: game ms simulated in this session */
+  int64_t  world_time_ms;     /* in-game clock (day 0, 00:00 = 0); runs 14.5x session ticks */
+} og_clock;
+
+/* Fixed-timestep variant of og_step (v15, task 5.3, ADR 0021): the simulation advances
+ * by exactly dt_ms (1..OG_STEP_MAX_DT_MS; no 5 ms minimum, no 50 ms cap), or by
+ * nothing while loading, paused or in a video. Animation, camera and on_frame as for
+ * og_step. Exception: OpenGothic's Marvin single-step debug mode (F10 while suspended) still
+ * advances 16 ms. If clock_out is not NULL it receives the clock after the step.
+ * Returns the game ms advanced (dt_ms or 0), OG_STEP_BAD_DT (nothing ran),
+ * OG_RUN_EXCEPTION, or OG_LOOP_BAD_STATE. */
+int og_step_fixed(og_ctx* ctx, uint32_t dt_ms, og_clock* clock_out);
+
+#define OG_STEP_MAX_DT_MS 1000
+
 /* Draws and presents one frame (UI, world, video capture) and sleeps for the game's
  * frame cap. Returns 0, OG_RUN_EXCEPTION, or OG_LOOP_BAD_STATE. */
 int og_render(og_ctx* ctx);
@@ -106,6 +125,7 @@ int og_shutdown(og_ctx* ctx);
  * is not og_init's, or a call from inside a callback. */
 #define OG_LOOP_BAD_STATE (-1003)
 #define OG_STEP_TOO_SHORT (-1004)
+#define OG_STEP_BAD_DT    (-1005)  /* og_step_fixed: dt_ms outside 1..OG_STEP_MAX_DT_MS */
 
 /* 0-based index of the current frame. */
 uint64_t og_ctx_frame(const og_ctx* ctx);

@@ -12,6 +12,8 @@
 #include "og_capi_internal.h"
 #include "../og_main.h"
 #include "mainwindow.h"
+#include "game/gamesession.h"
+#include "gothic.h"
 
 // Tempest's exec loop runs its timers (Tempest::Timer: chapter screen, game menu,
 // inventory) after each event, through Application's private callback object;
@@ -190,6 +192,28 @@ int og_step(og_ctx* c, uint32_t dtMs) {
   return guarded("og_step",[dtMs]{
     const int64_t advanced = OgMain::window(*engine).ogStep(dtMs);
     return advanced<0 ? OG_STEP_TOO_SHORT : int(advanced);
+    });
+  }
+
+int og_step_fixed(og_ctx* c, uint32_t dtMs, og_clock* clockOut) {
+  if(!loopReady(c,"og_step_fixed"))
+    return OG_LOOP_BAD_STATE;
+  if(dtMs<1 || dtMs>OG_STEP_MAX_DT_MS) {
+    Tempest::Log::e("og_step_fixed: dt_ms ",dtMs," is outside 1..",OG_STEP_MAX_DT_MS);
+    return OG_STEP_BAD_DT;
+    }
+  return guarded("og_step_fixed",[dtMs,clockOut]{
+    const uint64_t advanced = OgMain::window(*engine).ogStepFixed(dtMs);
+    if(clockOut!=nullptr) {
+      *clockOut = og_clock{};
+      clockOut->world_generation = OgHooks::worldGeneration;
+      if(const GameSession* s = Gothic::inst().gameSession()) {
+        clockOut->in_session    = 1;
+        clockOut->session_ticks = s->tickCount();
+        clockOut->world_time_ms = s->time().toInt();
+        }
+      }
+    return int(advanced);
     });
   }
 

@@ -1424,31 +1424,37 @@ int og_dev_console(og_ctx* ctx, og_str command) {
     });
   }
 
+// After every call that may start or end an action (UB-30).
+static int syncWalkHook(int ret) {
+  OgHooks::hostWalksPlayer = act.kind!=Kind::None && act.usesAi && act.generation==OgHooks::worldGeneration;
+  return ret;
+  }
+
 int og_submit(og_ctx* ctx, const og_command* cmd, char* reason, size_t cap) {
-  return guarded("og_submit",ctx,[&]{
+  return syncWalkHook(guarded("og_submit",ctx,[&]{
     if(cmd==nullptr || (reason==nullptr && cap>0)) {
       Tempest::Log::e("og_submit: NULL command or reason buffer");
       return OG_CTL_BAD_ARGS;
       }
     return submit(*cmd,reason,cap);
-    });
+    }));
   }
 
 int og_cancel_action(og_ctx* ctx) {
-  return guarded("og_cancel_action",ctx,[&]{
+  return syncWalkHook(guarded("og_cancel_action",ctx,[&]{
     if(act.kind!=Kind::None)
       Tempest::Log::i("og_cancel_action: cancelled by host");
     cancel(Gothic::inst().player());
     return OG_CTL_OK;
-    });
+    }));
   }
 
 int og_action_update(og_ctx* ctx, char* reason, size_t cap) {
-  return guarded("og_action_update",ctx,[&]{
+  return syncWalkHook(guarded("og_action_update",ctx,[&]{
     if(reason==nullptr && cap>0) {
       Tempest::Log::e("og_action_update: NULL reason buffer");
       return OG_CTL_BAD_ARGS;
       }
     return update(reason,cap);
-    });
+    }));
   }

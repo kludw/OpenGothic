@@ -80,6 +80,9 @@ class MainWindow : public Tempest::Window {
     // paused, in a video, ...), or -1 if dtMs < MinTickMs: nothing advanced and the
     // time was not consumed (the host keeps accumulating, like stock tick()).
     int64_t             ogStep(uint64_t dtMs);
+    // Fixed-dt simulation half (task 5.3): as ogStep, but advances exactly dtMs (no
+    // 5 ms minimum, no 50 ms cap). Returns dtMs, or 0 if nothing advanced.
+    uint64_t            ogStepFixed(uint64_t dtMs);
     // Draw half: UI paint, world draw, present, frame pacing (maxFps sleep).
     void                ogDraw();
 
@@ -133,7 +136,7 @@ class MainWindow : public Tempest::Window {
     bool frameBegin();
     void tickAfter(uint64_t dt);
     void drawFrame();
-    uint64_t tickSim(uint64_t dt);
+    uint64_t tickSim(uint64_t dt, bool ogFixedDt = false);
 
     uint64_t tick();
     void     updateAnimation(uint64_t dt);

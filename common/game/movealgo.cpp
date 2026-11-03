@@ -2,6 +2,7 @@
 
 #include <Tempest/Log>
 
+#include "capi/oghooks.h"
 #include "world/objects/npc.h"
 #include "world/objects/interactive.h"
 #include "world/world.h"
@@ -935,7 +936,9 @@ void MoveAlgo::onMoveFailed(const Tempest::Vec3& dp, const DynamicWorld::Collisi
     return;
     }
 
-  if(npc.processPolicy()!=NpcProcessPolicy::Player && bump) {
+  // opengothic-rs: a player walked by the seam's AI actions bounces like an NPC; without
+  // it, turning back to the target every step can hold him against an obstacle (UB-30).
+  if((npc.processPolicy()!=NpcProcessPolicy::Player || OgHooks::hostWalksPlayer) && bump) {
     lastBounce = npc.world().tickCount();
     if(info.npc!=nullptr)
       lastBounce += 800; else

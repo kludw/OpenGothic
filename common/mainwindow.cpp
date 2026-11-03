@@ -1035,7 +1035,7 @@ uint64_t MainWindow::tick() {
   return tickSim(dt);
   }
 
-uint64_t MainWindow::tickSim(uint64_t dt) {
+uint64_t MainWindow::tickSim(uint64_t dt, bool ogFixedDt) {
   auto st = Gothic::inst().checkLoading();
   if(st==Gothic::LoadState::Finalize || st==Gothic::LoadState::FailedLoad || st==Gothic::LoadState::FailedSave) {
     Gothic::inst().finishLoading();
@@ -1060,7 +1060,8 @@ uint64_t MainWindow::tickSim(uint64_t dt) {
     return 0;
     }
 
-  if(dt>50)
+  // opengothic-rs: a fixed-dt host step (task 5.3) advances exactly its dt.
+  if(dt>50 && !ogFixedDt)
     dt=50;
 
   if(runtimeMode==R_Step) {
@@ -1507,6 +1508,14 @@ int64_t MainWindow::ogStep(uint64_t dtMs) {
     }
   tickAfter(dt);
   return ret;
+  }
+
+uint64_t MainWindow::ogStepFixed(uint64_t dtMs) {
+  if(!frameBegin())
+    return 0;
+  const uint64_t dt = tickSim(dtMs,true);
+  tickAfter(dt);
+  return dt;
   }
 
 void MainWindow::ogDraw() {

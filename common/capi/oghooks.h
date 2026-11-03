@@ -30,6 +30,9 @@ namespace OgHooks {
   // movement alone. hostFightsForPlayer: the NPC fight AI (Npc::implAttack) drives the
   // player, with playerFightTactic if the hero has none of its own (fight_tactic 0).
   extern bool    hostDrivesPlayer;
+  // A seam action walks the player through the AI queue (go_to, pick_up, talk_to, ...):
+  // MoveAlgo then gives the player the NPCs' bounce off obstacles (task 5.3, UB-30).
+  extern bool    hostWalksPlayer;
   extern bool    hostFightsForPlayer;
   extern int32_t playerFightTactic;
   }
