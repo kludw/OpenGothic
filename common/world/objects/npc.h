@@ -346,7 +346,8 @@ class Npc final {
     void      onWldItemRemoved(const Item& itm);
     void      delItem    (size_t id, uint32_t amount);
     void      useItem    (size_t item);
-    void      useItem    (size_t item, uint8_t slotHint, bool force);
+    // opengothic-rs: returns Inventory::use's result (was void) for the C seam's use_item.
+    bool      useItem    (size_t item, uint8_t slotHint, bool force);
     void      setCurrentItem(size_t item);
     void      unequipItem(size_t item);
     void      addItem    (size_t id, Interactive& chest, size_t count=1);

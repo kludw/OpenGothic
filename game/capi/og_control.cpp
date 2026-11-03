@@ -7,6 +7,7 @@
 #include <Tempest/Log>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <exception>
@@ -17,6 +18,8 @@
 #include "capi/oghooks.h"
 #include "og_capi_internal.h"
 #include "og_ids.h"
+#include "game/constants.h"
+#include "game/gamescript.h"
 #include "game/playercontrol.h"
 #include "ui/dialogmenu.h"
 #include "ui/videowidget.h"
@@ -46,11 +49,14 @@ constexpr uint64_t TURN_TIMEOUT = 6000;
 constexpr uint64_t JUMP_TIMEOUT = 5000;
 constexpr uint64_t JUMP_START   = 1500;
 constexpr uint64_t TAKE_TIMEOUT = 1000;
+// use_item: time to get the use animation going, then to finish it.
+constexpr uint64_t USE_START    = 1000;
+constexpr uint64_t USE_TIMEOUT  = 15000;
 constexpr float    TURN_DONE    = 2.f;  // degrees
 // Upper bound for wait: keeps the seconds->ms conversion defined (og_capi.h).
 constexpr float    WAIT_MAX_S   = 86400.f;
 
-enum class Kind : uint8_t { None, GoTo, Turn, TalkTo, Wait, PickUp, Step, Jump, Done };
+enum class Kind : uint8_t { None, GoTo, Turn, TalkTo, Wait, PickUp, Step, Jump, UseItem, Done };
 
 struct Action {
   Kind             kind  = Kind::None;
@@ -70,6 +76,10 @@ struct Action {
   // Pressed key action (motor commands), released on end or cancel.
   KeyCodec::Action key    = KeyCodec::Idle;
   bool             usesAi = false;
+  // use_item: item class, stack size before, and whether the use animation was seen.
+  size_t           cls     = 0;
+  size_t           count   = 0;
+  bool             seenUse = false;
   };
 
 Action act;
@@ -258,6 +268,56 @@ bool pushGoTo(World& w, Npc& pl, Action& a, std::string& why) {
   return true;
   }
 
+// Slots Inventory::use puts these in (equip/unequip); everything else is used up or toggled.
+bool equippable(const Item& it) {
+  const auto main = uint32_t(it.handle().main_flag);
+  const auto flag = uint32_t(it.handle().flags);
+  return (main & (ITM_CAT_NF|ITM_CAT_FF|ITM_CAT_ARMOR|ITM_CAT_RUNE))!=0 ||
+         (flag & (ITM_SHIELD|ITM_BELT|ITM_AMULET|ITM_RING))!=0;
+  }
+
+std::string attributeName(int32_t a) {
+  switch(a) {
+    case ATR_HITPOINTS:    return "hit points";
+    case ATR_HITPOINTSMAX: return "max hit points";
+    case ATR_MANA:         return "mana";
+    case ATR_MANAMAX:      return "max mana";
+    case ATR_STRENGTH:     return "strength";
+    case ATR_DEXTERITY:    return "dexterity";
+    }
+  return "attribute "+std::to_string(a);
+  }
+
+// Why the player can't equip it, or "" if the item's requirements are met.
+std::string unmetCondition(const Npc& pl, const Item& it) {
+  int32_t a = 0, v = 0;
+  if(!it.checkCondUse(pl,a,v))
+    return "needs "+attributeName(a)+" "+std::to_string(v)+" (the hero has "+std::to_string(pl.attribute(Attribute(a)))+")";
+  if(!it.checkCondRune(pl,a,v))
+    return "needs magic circle "+std::to_string(v)+" (the hero has "+std::to_string(a)+")";
+  return "";
+  }
+
+// The stack of the player's inventory that s (an instance name, any case) names.
+Item* heldItem(World& w, Npc& pl, const og_str& s, size_t& cls, std::string& name, std::string& why) {
+  if(s.len>0 && s.ptr==nullptr) {
+    why = "bad item instance name";
+    return nullptr;
+    }
+  name.assign(s.ptr==nullptr ? "" : s.ptr,s.len);
+  for(auto& c:name)
+    c = char(std::toupper(static_cast<unsigned char>(c)));
+  if(name.empty()) {
+    why = "no item instance name given";
+    return nullptr;
+    }
+  cls = w.script().findSymbolIndex(name);
+  Item* it = cls==size_t(-1) ? nullptr : pl.getItem(cls);
+  if(it==nullptr)
+    why = "no '"+name+"' in the inventory";
+  return it;
+  }
+
 KeyCodec::Action stepKey(int32_t dir) {
   switch(dir) {
     case OG_STEP_FORWARD:  return KeyCodec::Forward;
@@ -371,6 +431,62 @@ int submit(const og_command& cmd, char* out, size_t cap) {
     case OG_CMD_JUMP:
       a.kind = Kind::Jump;
       break;
+    case OG_CMD_USE_ITEM: {
+      std::string name;
+      Item* it = heldItem(w,pl,cmd.instance,a.cls,name,why);
+      if(it==nullptr)
+        return reject(out,cap,why);
+      if(equippable(*it))
+        return reject(out,cap,"'"+name+"' is equipment; use equip");
+      // A document's script opens DocumentMenu, which only a key closes: no command could.
+      if((uint32_t(it->handle().main_flag) & ITM_CAT_DOCS)!=0)
+        return reject(out,cap,"reading documents and maps is not supported yet");
+      a.kind  = Kind::UseItem;
+      a.count = pl.itemCount(a.cls);
+      a.until = a.start+USE_START;
+      break;
+      }
+    case OG_CMD_EQUIP:
+    case OG_CMD_UNEQUIP: {
+      std::string name;
+      size_t      cls = 0;
+      Item* it = heldItem(w,pl,cmd.instance,cls,name,why);
+      if(it==nullptr)
+        return reject(out,cap,why);
+      if(!equippable(*it))
+        return reject(out,cap,"'"+name+"' can't be equipped; use use_item");
+      const bool on = cmd.kind==OG_CMD_EQUIP;
+      // A second ring of a stack goes on the other hand (Inventory::use).
+      const bool ring = (uint32_t(it->handle().flags) & ITM_RING)!=0;
+      const bool full = ring ? it->equipCount()>=it->count() : it->isEquipped();
+      if(on && full)
+        return reject(out,cap,"'"+name+"' is already equipped");
+      if(!on && !it->isEquipped())
+        return reject(out,cap,"'"+name+"' is not equipped");
+      if(w.isCutsceneLock())
+        return reject(out,cap,"a cutscene is running; wait");
+      const uint8_t before = it->equipCount();
+      if(on) {
+        const std::string unmet = unmetCondition(pl,*it);
+        if(!unmet.empty())
+          return reject(out,cap,"can't equip '"+name+"': "+unmet);
+        pl.useItem(cls);
+        } else {
+        pl.unequipItem(cls);
+        }
+      it = pl.getItem(cls);
+      const bool changed = it!=nullptr && (on ? it->equipCount()>before : !it->isEquipped());
+      if(!changed)
+        return reject(out,cap,on ? "the game did not equip '"+name+"' (no free slot, or busy)"
+                                 : "the game did not take off '"+name+"'");
+      // Equipped while the previous action still runs: nothing it depends on changes,
+      // and a refused equip must leave it running (og_submit's contract).
+      cancel(&pl);
+      act      = a;
+      act.kind = Kind::Done;
+      Tempest::Log::i("og_submit: ",on ? "equipped " : "unequipped ",name);
+      return OG_CTL_OK;
+      }
     default:
       return reject(out,cap,"unknown command kind "+std::to_string(cmd.kind));
     }
@@ -571,6 +687,45 @@ int update(char* out, size_t cap) {
         return finish();
       if(now>act.until)
         return fail(out,cap,&pl,"the NPC did not start a conversation");
+      return OG_ACTION_RUNNING;
+      }
+
+    case Kind::UseItem: {
+      // Use once, when standing: right after walking the body state may not be "standing"
+      // yet. Items without a use animation run their script at once (Inventory::use).
+      if(act.phase==0) {
+        if(pl.bodyStateMasked()!=BS_STAND) {
+          if(now>act.until)
+            return fail(out,cap,&pl,"could not use the item (weapon drawn, swimming, or busy)");
+          return OG_ACTION_RUNNING;
+          }
+        Item* it = pl.getItem(act.cls);
+        if(it==nullptr)
+          return fail(out,cap,&pl,"the item is no longer in the inventory");
+        // A torch toggles inside Inventory::use; putting one out plays no animation.
+        const bool instant = it->handle().scheme_name.empty() ||
+                             (uint32_t(it->handle().flags) & ITM_TORCH)!=0;
+        if(!pl.useItem(act.cls,Item::NSLOT,false))
+          return fail(out,cap,&pl,"the game refused to use the item (weapon drawn, or busy)");
+        if(instant)
+          return finish();
+        act.phase = 1;
+        act.until = now+USE_START;
+        }
+      const bool using_ = pl.bodyStateMasked()==BS_ITEMINTERACT;
+      if(using_ && !act.seenUse) {
+        act.seenUse = true;
+        act.until   = now+USE_TIMEOUT;
+        }
+      if(using_) {
+        if(now>act.until)
+          return fail(out,cap,&pl,"still using the item after 15 s");
+        return OG_ACTION_RUNNING;
+        }
+      if(act.seenUse || pl.itemCount(act.cls)!=act.count)
+        return finish();
+      if(now>act.until)
+        return fail(out,cap,&pl,"the game did not use the item (busy, or it can't be used now)");
       return OG_ACTION_RUNNING;
       }
 

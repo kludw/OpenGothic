@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-#define OG_CAPI_VERSION 8
+#define OG_CAPI_VERSION 9
 
 /* Per-frame context; only valid inside the callback that received it. */
 typedef struct og_ctx og_ctx;
@@ -253,6 +253,9 @@ int og_skip_videos(og_ctx* ctx);
 #define OG_CMD_STEP          7
 #define OG_CMD_TURN          8
 #define OG_CMD_JUMP          9
+#define OG_CMD_USE_ITEM     10  /* v9 */
+#define OG_CMD_EQUIP        11  /* v9 */
+#define OG_CMD_UNEQUIP      12  /* v9 */
 
 #define OG_TARGET_WAYPOINT 1  /* name */
 #define OG_TARGET_NPC      2  /* id */
@@ -276,7 +279,12 @@ typedef struct og_target {
  * CHOOSE_DIALOG: index (og_dialog_option_state.index).  WAIT: seconds of simulation time
  * (0..86400).
  * STEP: direction + millis of simulation time.  TURN: degrees, positive turns right
- * (clockwise seen from above, heading_deg decreases).  JUMP: nothing. */
+ * (clockwise seen from above, heading_deg decreases).  JUMP: nothing.
+ * USE_ITEM, EQUIP, UNEQUIP: instance, the script instance name of an item in the player's
+ * inventory (og_inventory_item_state.instance, any case). USE_ITEM is for items that are
+ * not equipment (potions, food, plants, torches; documents are refused); it ends when the
+ * use animation does. EQUIP (weapons, armour, shields, rings, amulets, belts, runes and scrolls) and
+ * UNEQUIP finish at once. */
 typedef struct og_command {
   int32_t   kind;  /* OG_CMD_* */
   og_target target;
@@ -285,6 +293,7 @@ typedef struct og_command {
   int32_t   direction;  /* OG_STEP_* */
   uint32_t  millis;
   float     degrees;
+  og_str    instance;   /* v9; game bytes, only read during og_submit */
 } og_command;
 
 /* Starts a command as the host's one action, replacing (cancelling) a running one.

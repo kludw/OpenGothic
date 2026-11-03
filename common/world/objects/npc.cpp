@@ -3634,8 +3634,8 @@ void Npc::useItem(size_t item) {
   useItem(item,Item::NSLOT,false);
   }
 
-void Npc::useItem(size_t item, uint8_t slotHint, bool force) {
-  invent.use(item,*this,slotHint,force);
+bool Npc::useItem(size_t item, uint8_t slotHint, bool force) {
+  return invent.use(item,*this,slotHint,force);
   }
 
 void Npc::setCurrentItem(size_t item) {
