@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-#define OG_CAPI_VERSION 18
+#define OG_CAPI_VERSION 19
 
 /* Per-frame context; only valid inside the callback that received it. Exception (v14):
  * og_init's context is also the handle for the loop functions until og_shutdown. */
@@ -172,6 +172,8 @@ typedef struct og_state_header {
   int32_t minute;
   int32_t paused;  /* 1 if the simulation is paused (by anyone), else 0 */
   int32_t video_playing;  /* 1 while a video plays or is queued: the simulation does not advance */
+  og_str  world;   /* v19: the loaded world's ZEN file name as the game opened it (case as given,
+                    * e.g. "NEWWORLD.ZEN" or "newworld.zen") */
 } og_state_header;
 
 typedef struct og_player_state {
@@ -201,6 +203,7 @@ typedef struct og_npc_state {
   int32_t  in_dialog; /* 1 if talking with the player */
   int32_t  in_sight;  /* v5: 1 if no wall/landscape blocks the ray from the player's eyes to the
                        * NPC's centre or head (OpenGothic's free-LOS check, without senses_range) */
+  og_str   instance;  /* v19: script instance symbol name, e.g. "WOLF" or "NONE_100_XARDAS" */
 } og_npc_state;
 
 typedef struct og_item_state {

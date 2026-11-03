@@ -136,6 +136,7 @@ void visit(Gothic& g, World& w, Npc& pl, const og_state_query& q, const og_state
   h.minute = int32_t(t.minute());
   h.paused = g.isPause() ? 1 : 0;
   h.video_playing = OgHooks::video!=nullptr && OgHooks::video->isActive() ? 1 : 0;
+  h.world  = str(w.name());
   v.header(u,&h);
 
   og_player_state p = {};
@@ -180,6 +181,7 @@ void visit(Gothic& g, World& w, Npc& pl, const og_state_query& q, const og_state
       s.hp_max    = npc.attribute(ATR_HITPOINTSMAX);
       s.in_dialog = g.isNpcInDialog(npc) ? 1 : 0;
       s.in_sight  = inSight(w,pl,npc) ? 1 : 0;
+      s.instance  = str(instanceName(script,npc.instanceSymbol()));
       v.npc(u,&s);
       }
     }
