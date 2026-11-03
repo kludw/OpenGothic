@@ -27,8 +27,8 @@
  *
  * Only outermost public calls are recorded: what a public call does through other public
  * calls (landRay -> ray, tryMove -> setPosition, tick -> bullet moves) is not a record of
- * its own, so a replay calls exactly the recorded functions. A public call's record is
- * written when it returns. Game code that physics calls back (bullet and bbox callbacks,
+ * its own, so a replay calls exactly the recorded functions. A query's or tick's record
+ * is written when it returns, a setter's when it is called (setters run no callbacks). Game code that physics calls back (bullet and bbox callbacks,
  * the item hit sound) counts as outermost again: its records sit between CALLBACK_BEGIN
  * and CALLBACK_END, written before the record of the call that ran the callback (a
  * replay applies them when it reaches that call's callback). Calls from several threads
@@ -84,9 +84,15 @@ enum {
    * 3 u32 vertex indices per triangle (Bullet's winding). A shape number is reused only
    * for the same pointer with the same hash; a changed hash gets a new number. */
   OG_PT_SHAPE = 8,
-  /* u32 world, u8 callback (OG_PT_CB_*) */
+  /* u32 world, u8 callback (OG_PT_CB_*), u32 object (the bullet or bbox the callback
+   * is about; 0 for ITEM_HIT), then by callback:
+   *   BULLET_MOVE, BULLET_STOP: nothing
+   *   BULLET_HIT_MATERIAL: u8 material group
+   *   BULLET_HIT_NPC: payload npc
+   *   BBOX_HIT: u32 bullet object
+   *   ITEM_HIT: payload item, u8 material group, f32 impulse, f32 mass */
   OG_PT_CALLBACK_BEGIN = 9,
-  /* u32 world */
+  /* u32 world, u8 result (BULLET_HIT_NPC: what onCollide returned; 0 otherwise) */
   OG_PT_CALLBACK_END = 10,
   };
 

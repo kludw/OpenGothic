@@ -2,6 +2,8 @@
 
 #include <Tempest/Matrix4x4>
 
+#include "../../game/capi/og_phys_trace.h"
+
 #include <chrono>
 #include <cstdint>
 #include <string>
@@ -37,23 +39,6 @@ namespace PhysTrace {
       bool                                  counted = false;
       bool                                  outer   = false;
       std::chrono::steady_clock::time_point start;
-    };
-
-  // Game code called back from inside a physics call (bullet/bbox callbacks, the item hit
-  // sound): its own physics calls are outermost again, bracketed by CALLBACK_BEGIN/END
-  // when the call that runs the callback is itself traced.
-  class Callback final {
-    public:
-      Callback(uint32_t world, uint8_t kind);
-      ~Callback();
-      Callback(const Callback&)=delete;
-      Callback& operator=(const Callback&)=delete;
-
-    private:
-      int      saved  = 0;
-      bool     marked = false;
-      bool     counted = false;
-      uint32_t world  = 0;
     };
 
   // One record: the body is built in memory and written whole by the destructor; a body
@@ -103,5 +88,41 @@ namespace PhysTrace {
   // cached for the process); `first` tells the caller to write the SHAPE record.
   uint32_t shape(const void* shp, uint64_t hash, bool& first);
   // Trace number of what a physics object points at (0 for null), see og_phys_trace.h.
+  // Numbers are never released: a pointer the engine reuses keeps its number, which the
+  // next PAYLOAD record hands to the new owner.
   uint32_t payload(const void* p);
+
+  // Game code called back from inside a physics call (bullet/bbox callbacks, the item hit
+  // sound): its own physics calls are outermost again, bracketed by CALLBACK_BEGIN/END
+  // when the call that runs the callback is itself traced. `obj` is the physics object
+  // the callback is about (null: none); `args(Rec&)` appends the kind's arguments and runs
+  // only when the bracket is written.
+  class Callback final {
+    public:
+      template<class F>
+      Callback(uint32_t world, uint8_t kind, const void* obj, F&& args):world(world) {
+        if(!enter())
+          return;
+        Rec r(OG_PT_CALLBACK_BEGIN,world);
+        r.u8(kind).u32(obj!=nullptr ? object(obj).id : 0);
+        args(r);
+        }
+      Callback(uint32_t world, uint8_t kind, const void* obj)
+        :Callback(world,kind,obj,[](Rec&){}) {}
+      ~Callback();
+      Callback(const Callback&)=delete;
+      Callback& operator=(const Callback&)=delete;
+
+      // What the callback returned (onCollide(Npc&)), written with CALLBACK_END.
+      void setResult(bool r) { result = r; }
+
+    private:
+      bool     enter();
+
+      int      saved   = 0;
+      bool     marked  = false;
+      bool     counted = false;
+      bool     result  = false;
+      uint32_t world   = 0;
+    };
   }

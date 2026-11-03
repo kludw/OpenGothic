@@ -500,7 +500,7 @@ struct DynamicWorld::BulletsList final {
     for(auto& i:body) {
       wrld.moveBullet(i,i.dir,dt);
       if(i.cb!=nullptr) {
-        PhysTrace::Callback cb(wrld.traceWorld,OG_PT_CB_BULLET_MOVE);
+        PhysTrace::Callback cb(wrld.traceWorld,OG_PT_CB_BULLET_MOVE,&i);
         i.cb->onMove();
         }
       }
@@ -513,11 +513,14 @@ struct DynamicWorld::BulletsList final {
       if(i.cb!=nullptr && list.rayTest(npc, i.pos, Tempest::Vec3::normalize(dp), dp.length(), i.tgRange, proj)) {
         bool stop = false;
         {
-        PhysTrace::Callback cb(wrld.traceWorld,OG_PT_CB_BULLET_HIT_NPC);
+        PhysTrace::Callback cb(wrld.traceWorld,OG_PT_CB_BULLET_HIT_NPC,&i,[&npc](PhysTrace::Rec& r){
+          r.u32(PhysTrace::payload(npc.toNpc()));
+          });
         stop = i.cb->onCollide(*npc.toNpc());
+        cb.setResult(stop);
         }
         if(stop) {
-          PhysTrace::Callback cb(wrld.traceWorld,OG_PT_CB_BULLET_STOP);
+          PhysTrace::Callback cb(wrld.traceWorld,OG_PT_CB_BULLET_STOP,&i);
           i.cb->onStop();
           }
         }
@@ -652,7 +655,9 @@ DynamicWorld::DynamicWorld(World* owner, const zenkit::Mesh& worldMesh) {
 
   if(owner!=nullptr) {
     world->setItemHitCallback([this,owner](::Item& itm, zenkit::MaterialGroup mat, float impulse, float mass) {
-      PhysTrace::Callback cb(traceWorld,OG_PT_CB_ITEM_HIT);
+      PhysTrace::Callback cb(traceWorld,OG_PT_CB_ITEM_HIT,nullptr,[&](PhysTrace::Rec& r){
+        r.u32(PhysTrace::payload(&itm)).u8(uint8_t(mat)).f32(impulse).f32(mass);
+        });
       auto  snd = owner->addLandHitEffect(ItemMaterial(itm.handle().material),mat,itm.transform());
       float v   = impulse/mass;
       float vol = snd.volume()*std::min(v/10.f,1.f);
@@ -1112,7 +1117,9 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
 
   if(auto ptr = bboxList->rayTest(s,e)) {
     if(ptr->cb!=nullptr) {
-      PhysTrace::Callback cb(traceWorld,OG_PT_CB_BBOX_HIT);
+      PhysTrace::Callback cb(traceWorld,OG_PT_CB_BBOX_HIT,ptr->obj,[&b](PhysTrace::Rec& r){
+        r.u32(PhysTrace::object(&b).id);
+        });
       ptr->cb->onCollide(b);
       }
     }
@@ -1123,7 +1130,9 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
   if(callback.matId != zenkit::MaterialGroup::NONE) {
     if(isSpell){
       if(b.cb!=nullptr) {
-        PhysTrace::Callback cb(traceWorld,OG_PT_CB_BULLET_HIT_MATERIAL);
+        PhysTrace::Callback cb(traceWorld,OG_PT_CB_BULLET_HIT_MATERIAL,&b,[&callback](PhysTrace::Rec& r){
+          r.u8(uint8_t(callback.matId));
+          });
         b.cb->onCollide(callback.matId);
         }
       stopBullet = true;
@@ -1148,7 +1157,9 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
           b.addPathLen(l*a);
           b.addHit();
           if(b.cb!=nullptr) {
-            PhysTrace::Callback cb(traceWorld,OG_PT_CB_BULLET_HIT_MATERIAL);
+            PhysTrace::Callback cb(traceWorld,OG_PT_CB_BULLET_HIT_MATERIAL,&b,[&callback](PhysTrace::Rec& r){
+          r.u8(uint8_t(callback.matId));
+          });
             b.cb->onCollide(callback.matId);
             }
           }
@@ -1158,7 +1169,9 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
         b.addPathLen((to-pos).length()*a);
         b.addHit();
         if(b.cb!=nullptr) {
-          PhysTrace::Callback cb(traceWorld,OG_PT_CB_BULLET_HIT_MATERIAL);
+          PhysTrace::Callback cb(traceWorld,OG_PT_CB_BULLET_HIT_MATERIAL,&b,[&callback](PhysTrace::Rec& r){
+          r.u8(uint8_t(callback.matId));
+          });
           b.cb->onCollide(callback.matId);
           }
         stopBullet = true;
@@ -1167,8 +1180,12 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
     } else {
     if(auto ptr = npcList->rayTest(pos,to,b.targetRange(),nullptr)) {
       if(b.cb!=nullptr) {
-        PhysTrace::Callback cb(traceWorld,OG_PT_CB_BULLET_HIT_NPC);
-        stopBullet |= b.cb->onCollide(*ptr->toNpc());
+        PhysTrace::Callback cb(traceWorld,OG_PT_CB_BULLET_HIT_NPC,&b,[ptr](PhysTrace::Rec& r){
+          r.u32(PhysTrace::payload(ptr->toNpc()));
+          });
+        const bool stop = b.cb->onCollide(*ptr->toNpc());
+        cb.setResult(stop);
+        stopBullet |= stop;
         } else {
         stopBullet  = true;
         }
@@ -1184,7 +1201,7 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
 
   if(stopBullet || b.hitCount()>3 || b.pathLength()>10000) {
     if(b.cb!=nullptr) {
-      PhysTrace::Callback cb(traceWorld,OG_PT_CB_BULLET_STOP);
+      PhysTrace::Callback cb(traceWorld,OG_PT_CB_BULLET_STOP,&b);
       b.cb->onStop();
       }
     }

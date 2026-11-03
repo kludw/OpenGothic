@@ -201,9 +201,16 @@ struct OgMain::Engine {
     // opengothic-rs (task 6.2): before any world exists, so the trace sees all of them.
     if(!cmd.physicsTrace().empty())
       PhysTrace::open(std::string(cmd.physicsTrace()));
-    gothic.setupGlobalScripts();
-    wx.emplace(device);
-    app.emplace();
+    try {
+      gothic.setupGlobalScripts();
+      wx.emplace(device);
+      app.emplace();
+      }
+    catch(...) {
+      // No shutdown follows a failed init: close (and report) the trace here.
+      PhysTrace::close();
+      throw;
+      }
     }
 
   static std::string_view selectGpu(const Tempest::AbstractGraphicsApi& api) {
@@ -223,9 +230,10 @@ MainWindow& OgMain::window(Engine& e) {
   }
 
 void OgMain::shutdown(Engine* e) {
+  // After the engine (also if destroying it throws): worlds destroyed with it still write
+  // their records.
+  struct TraceCloser { ~TraceCloser(){ PhysTrace::close(); } } closer;
   delete e;
-  // After the engine: worlds destroyed with it still write their records.
-  PhysTrace::close();
   }
 
 int og_main(int argc,const char** argv) {

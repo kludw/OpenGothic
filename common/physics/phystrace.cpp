@@ -115,24 +115,24 @@ uint64_t PhysTrace::Call::ns() const {
   return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(d).count());
   }
 
-PhysTrace::Callback::Callback(uint32_t world, uint8_t kind):world(world) {
+bool PhysTrace::Callback::enter() {
   if(!active())
-    return;
+    return false;
   counted = true;
   saved   = depth;
-  if(depth>0) {
-    marked = true;
-    Rec(OG_PT_CALLBACK_BEGIN,world).u8(kind);
-    }
-  depth = 0;
+  marked  = (depth>0);
+  depth   = 0;
+  return marked;
   }
 
 PhysTrace::Callback::~Callback() {
   if(!counted)
     return;
   depth = saved;
-  if(marked)
+  if(marked) {
     Rec r(OG_PT_CALLBACK_END,world);
+    r.u8(result ? 1 : 0);
+    }
   }
 
 PhysTrace::Rec::Rec(uint8_t kind, uint32_t world):kind(kind) {
