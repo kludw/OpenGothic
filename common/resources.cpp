@@ -32,6 +32,7 @@
 #include "utils/gthfont.h"
 
 #include "gothic.h"
+#include "capi/ogvfs.h" // opengothic-rs
 #include "utils/string_frm.h"
 
 #include <dmusic.h>
@@ -102,6 +103,7 @@ Resources::Resources(Tempest::Device &device)
 
   DmLoader_addResolver(dmLoader, [](void* ctx, char const* name, size_t* len) -> void* {
       auto* slf = reinterpret_cast<Resources*>(ctx);
+      OgVfs::sync(slf->gothicAssets); // opengothic-rs: Rust VFS (og_vfs.h)
       auto* node = slf->gothicAssets.find(name);
 
       if (node == nullptr) {
@@ -122,6 +124,7 @@ Resources::Resources(Tempest::Device &device)
   }
 
 void Resources::mountVdfs(const std::vector<std::u16string>& vdfs) {
+  if(OgVfs::mountVdfs(inst->gothicAssets, vdfs)) return; // opengothic-rs: Rust VFS (og_vfs.h)
   std::vector<Archive> archives;
   for(auto& file:vdfs) {
     Archive ar;
@@ -161,6 +164,7 @@ void Resources::mountVdfs(const std::vector<std::u16string>& vdfs) {
   }
 
 void Resources::mountWork(const std::filesystem::path& path) {
+  if(OgVfs::mountWork(inst->gothicAssets, path)) return; // opengothic-rs: Rust VFS (og_vfs.h)
   inst->gothicAssets.mkdir("/_work");
   inst->gothicAssets.mount_host(path, "/_work", zenkit::VfsOverwriteBehavior::NONE);
   }
@@ -170,6 +174,7 @@ void Resources::unloadAll() {
 
   std::lock_guard<std::recursive_mutex> g(inst->sync);
   inst->gothicAssets = zenkit::Vfs();
+  OgVfs::release(); // opengothic-rs: Rust VFS (og_vfs.h)
   inst->texCache.clear();
   inst->pixCache.clear();
   inst->aniMeshCache.clear();
@@ -191,6 +196,7 @@ Resources::~Resources() {
 
 bool Resources::hasFile(std::string_view name) {
   std::lock_guard<std::recursive_mutex> g(inst->sync);
+  OgVfs::sync(inst->gothicAssets); // opengothic-rs: Rust VFS (og_vfs.h)
   return inst->gothicAssets.find(name) != nullptr;
   }
 
@@ -313,6 +319,7 @@ const Tempest::StorageImage& Resources::fallbackImage() {
   }
 
 const zenkit::Vfs& Resources::vdfsIndex() {
+  OgVfs::sync(inst->gothicAssets); // opengothic-rs: Rust VFS (og_vfs.h)
   return inst->gothicAssets;
   }
 
