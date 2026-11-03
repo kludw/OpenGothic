@@ -70,6 +70,19 @@ class MainWindow : public Tempest::Window {
     const OgVideoFrame* ogVideoPeek() const;
     void                ogVideoPop();
 
+    // opengothic-rs (task 5.2): render() in two halves for a host that owns the loop.
+    // While host-driven, render() (called by the display link) does nothing.
+    void                ogSetHostDriven(bool driven);
+    // Display refreshes seen while host-driven (each would have been a stock frame).
+    uint64_t            ogDisplayRefreshes() const;
+    // Simulation half: tick (with dtMs of wall time instead of the clock), animation,
+    // camera, then OgHooks::onFrame. Returns the game ms advanced (0 while loading,
+    // paused, in a video, ...), or -1 if dtMs < MinTickMs: nothing advanced and the
+    // time was not consumed (the host keeps accumulating, like stock tick()).
+    int64_t             ogStep(uint64_t dtMs);
+    // Draw half: UI paint, world draw, present, frame pacing (maxFps sleep).
+    void                ogDraw();
+
   private:
     void paintEvent     (Tempest::PaintEvent& event) override;
     void resizeEvent    (Tempest::SizeEvent & event) override;
@@ -117,6 +130,10 @@ class MainWindow : public Tempest::Window {
     void setupUi();
 
     void render() override;
+    bool frameBegin();
+    void tickAfter(uint64_t dt);
+    void drawFrame();
+    uint64_t tickSim(uint64_t dt);
 
     uint64_t tick();
     void     updateAnimation(uint64_t dt);
@@ -197,6 +214,10 @@ class MainWindow : public Tempest::Window {
     Tempest::Point            dMouse;
     PlayerControl             player;
     uint64_t                  lastTick=0;
+    bool                      ogHostDriven=false;
+    uint64_t                  ogDisplayTicks=0;
+    // Game logic runs at most ~200 times a second (stock: "avoid math issues").
+    static constexpr uint64_t MinTickMs=5;
 
     Tempest::Shortcut         funcKey[11];
     Tempest::Shortcut         displayPos;

@@ -242,7 +242,7 @@ void MainWindow::ogVideoCollect(uint8_t slot) {
   OgVideoFrame f;
   f.tag  = s.tag;
   f.size = Size(int(s.image.w()),int(s.image.h()));
-  f.rgba.resize(size_t(s.image.w())*s.image.h()*4);
+  f.rgba.resize(size_t(s.image.w())*size_t(s.image.h())*4);
   // The slot's fence has signalled, so the copy is done; Tempest's Metal read still
   // goes through a blit on the queue and waits for it (up to the other slot's frame).
   device.readBytes(s.readback,f.rgba.data(),f.rgba.size());
@@ -1029,10 +1029,13 @@ uint64_t MainWindow::tick() {
   auto time = Application::tickCount();
   auto dt   = time-lastTick;
   // NOTE: limit to ~200 FPS in game logic to avoid math issues
-  if(dt<5)
+  if(dt<MinTickMs)
     return 0;
   lastTick  = time;
+  return tickSim(dt);
+  }
 
+uint64_t MainWindow::tickSim(uint64_t dt) {
   auto st = Gothic::inst().checkLoading();
   if(st==Gothic::LoadState::Finalize || st==Gothic::LoadState::FailedLoad || st==Gothic::LoadState::FailedSave) {
     Gothic::inst().finishLoading();
@@ -1377,87 +1380,140 @@ void MainWindow::setFullscreen(bool fs) {
   }
 
 void MainWindow::render(){
+  // opengothic-rs: a host that owns the loop calls ogStep/ogDraw itself (task 5.2);
+  // the display link keeps calling render(), which then only counts the refresh
+  // (the host paces its loop on it, as stock frames are paced).
+  if(ogHostDriven) {
+    ++ogDisplayTicks;
+    return;
+    }
   try {
-    static uint64_t time=Application::tickCount();
-
-    static bool once=true;
-    if(once) {
-      Gothic::inst().emitGlobalSoundWav("GAMESTART.WAV");
-      once=false;
-      }
-
-    if(T_UNLIKELY(Gothic::inst().isBenchmarkModeCi())) {
-      const auto st = Gothic::inst().checkLoading();
-      if(st==Gothic::LoadState::Loading) {
-        // skip loading frames in benchmark-ci mode, for sake of easier tooling
-        return;
-        }
-      }
-
+    if(!frameBegin())
+      return;
     /*
       Note: game update goes first
       once player position is updated, animation bones(cameraBone in particular) can be updated
       lastly - camera position
       */
     const uint64_t dt = tick();
-    updateAnimation(dt);
-    tickCamera(dt);
-    if(OgHooks::onFrame!=nullptr)
-      OgHooks::onFrame();
+    tickAfter(dt);
+    drawFrame();
+    }
+  catch(const Tempest::SwapchainSuboptimal&) {
+    Log::e("swapchain is outdated - reset renderer");
+    device.waitIdle();
+    swapchain.reset();
+    }
+  }
 
-    auto& sync = fence[cmdId];
-    if(!sync.wait(0)) {
-      // GPU rendering is not done, pass to next frame
-      std::this_thread::yield();
-      return;
-      }
-    Resources::resetRecycled(cmdId);
-    ogVideoCollect(cmdId);
+bool MainWindow::frameBegin() {
+  static bool once=true;
+  if(once) {
+    Gothic::inst().emitGlobalSoundWav("GAMESTART.WAV");
+    once=false;
+    }
 
-    if(video.isActive()) {
-      video.paint(device,cmdId);
-      uiLayer.clear();
-      PaintEvent p(uiLayer,atlas,this->w(),this->h());
-      video.paintEvent(p);
-      }
-    else if(needToUpdate() || Gothic::inst().checkLoading()!=Gothic::LoadState::Idle) {
-      dispatchPaintEvent(uiLayer,atlas);
-
-      numOverlay.clear();
-      PaintEvent p(numOverlay,atlas,this->w(),this->h());
-      inventory.paintNumOverlay(p);
-      }
-    uiMesh [cmdId].update(device,uiLayer);
-    numMesh[cmdId].update(device,numOverlay);
-
-    CommandBuffer& cmd = commands[cmdId];
-    {
-    auto enc = cmd.startEncoding(device);
-    auto& frame = swapchain[swapchain.currentImage()];
-    if(auto* target = ogVideoTarget()) {
-      renderer.draw(*target,enc,cmdId,uiMesh[cmdId],numMesh[cmdId],inventory,video);
-      ogVideoCopy(enc,frame);
-      } else {
-      renderer.draw(frame,enc,cmdId,uiMesh[cmdId],numMesh[cmdId],inventory,video);
+  if(T_UNLIKELY(Gothic::inst().isBenchmarkModeCi())) {
+    const auto st = Gothic::inst().checkLoading();
+    if(st==Gothic::LoadState::Loading) {
+      // skip loading frames in benchmark-ci mode, for sake of easier tooling
+      return false;
       }
     }
-    sync = device.submit(cmd);
-    device.present(swapchain);
-    cmdId = (cmdId+1u)%Resources::MaxFramesInFlight;
+  return true;
+  }
 
-    auto t = Application::tickCount();
-    auto frameTime = maxFpsInv;
-    if(!Gothic::inst().isInGame() && !video.isActive())
-      frameTime = std::max<uint64_t>(frameTime,16);
-    if(t-time<frameTime) {
-      uint32_t delay = uint32_t(frameTime-(t-time));
-      Application::sleep(delay);
-      t += delay;
-      }
-    fps.push(t-time);
-    if(Gothic::inst().isBenchmarkMode() && Gothic::inst().world()!=nullptr && Gothic::inst().world()->currentCs()!=nullptr)
-      benchmark.push(t-time);
-    time = t;
+void MainWindow::tickAfter(uint64_t dt) {
+  updateAnimation(dt);
+  tickCamera(dt);
+  if(OgHooks::onFrame!=nullptr)
+    OgHooks::onFrame();
+  }
+
+void MainWindow::drawFrame() {
+  static uint64_t time=Application::tickCount();
+
+  auto& sync = fence[cmdId];
+  if(!sync.wait(0)) {
+    // GPU rendering is not done, pass to next frame
+    std::this_thread::yield();
+    return;
+    }
+  Resources::resetRecycled(cmdId);
+  ogVideoCollect(cmdId);
+
+  if(video.isActive()) {
+    video.paint(device,cmdId);
+    uiLayer.clear();
+    PaintEvent p(uiLayer,atlas,this->w(),this->h());
+    video.paintEvent(p);
+    }
+  else if(needToUpdate() || Gothic::inst().checkLoading()!=Gothic::LoadState::Idle) {
+    dispatchPaintEvent(uiLayer,atlas);
+
+    numOverlay.clear();
+    PaintEvent p(numOverlay,atlas,this->w(),this->h());
+    inventory.paintNumOverlay(p);
+    }
+  uiMesh [cmdId].update(device,uiLayer);
+  numMesh[cmdId].update(device,numOverlay);
+
+  CommandBuffer& cmd = commands[cmdId];
+  {
+  auto enc = cmd.startEncoding(device);
+  auto& frame = swapchain[swapchain.currentImage()];
+  if(auto* target = ogVideoTarget()) {
+    renderer.draw(*target,enc,cmdId,uiMesh[cmdId],numMesh[cmdId],inventory,video);
+    ogVideoCopy(enc,frame);
+    } else {
+    renderer.draw(frame,enc,cmdId,uiMesh[cmdId],numMesh[cmdId],inventory,video);
+    }
+  }
+  sync = device.submit(cmd);
+  device.present(swapchain);
+  cmdId = (cmdId+1u)%Resources::MaxFramesInFlight;
+
+  auto t = Application::tickCount();
+  auto frameTime = maxFpsInv;
+  if(!Gothic::inst().isInGame() && !video.isActive())
+    frameTime = std::max<uint64_t>(frameTime,16);
+  if(t-time<frameTime) {
+    uint32_t delay = uint32_t(frameTime-(t-time));
+    Application::sleep(delay);
+    t += delay;
+    }
+  fps.push(t-time);
+  if(Gothic::inst().isBenchmarkMode() && Gothic::inst().world()!=nullptr && Gothic::inst().world()->currentCs()!=nullptr)
+    benchmark.push(t-time);
+  time = t;
+  }
+
+void MainWindow::ogSetHostDriven(bool driven) {
+  ogHostDriven = driven;
+  }
+
+uint64_t MainWindow::ogDisplayRefreshes() const {
+  return ogDisplayTicks;
+  }
+
+int64_t MainWindow::ogStep(uint64_t dtMs) {
+  if(!frameBegin())
+    return -1;
+  int64_t  ret = -1;
+  uint64_t dt  = 0;
+  if(dtMs>=MinTickMs) {
+    dt  = tickSim(dtMs);
+    ret = int64_t(dt);
+    }
+  tickAfter(dt);
+  return ret;
+  }
+
+void MainWindow::ogDraw() {
+  try {
+    if(T_UNLIKELY(Gothic::inst().isBenchmarkModeCi()) && Gothic::inst().checkLoading()==Gothic::LoadState::Loading)
+      return;
+    drawFrame();
     }
   catch(const Tempest::SwapchainSuboptimal&) {
     Log::e("swapchain is outdated - reset renderer");

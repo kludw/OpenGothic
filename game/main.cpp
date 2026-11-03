@@ -28,6 +28,9 @@
 #include "capi/og_capi.h"
 #include "capi/og_capi_internal.h"
 
+#include <memory>
+#include <optional>
+
 #include <dmusic.h>
 
 static std::string_view selectDevice(const Tempest::AbstractGraphicsApi& api) {
@@ -95,7 +98,8 @@ static int dmusicLevel(DmLogLevel lvl) {
   return OG_LOG_ERROR;
   }
 
-int og_main(int argc,const char** argv) {
+// opengothic-rs: process-wide setup of og_main (cwd on mobile, loggers, crash handler).
+static void setupProcess() {
 #if defined(__ANDROID__)
   {
     auto appdir = InstallDetect::androidInternalDataPath();
@@ -174,21 +178,51 @@ int og_main(int argc,const char** argv) {
 
   Tempest::Log::i(appBuild);
   Workers::setThreadName("Main thread");
+  }
 
-  CommandLine          cmd{argc,argv};
-  auto                 api     = mkApi(cmd);
-  const auto           gpuName = selectDevice(*api);
-  CrashLog::setGpu(gpuName);
+// opengothic-rs: everything og_main used to keep on its stack, in the same order, so
+// members are destroyed in the order the stack unwound (task 5.2: a host that owns the
+// loop keeps it between og_init and og_shutdown).
+struct OgMain::Engine {
+  CommandLine                                  cmd;
+  std::unique_ptr<Tempest::AbstractGraphicsApi> api;
+  Tempest::Device                              device;
+  Resources                                    resources;
+  Gothic                                       gothic;
+  GameMusic                                    music;
+  std::optional<MainWindow>                    wx;
+  std::optional<Tempest::Application>          app;
 
-  Tempest::Device      device{*api,gpuName};
-  CrashLog::setGpu(device.properties().name);
+  Engine(int argc, const char** argv)
+    :cmd{argc,argv}, api(mkApi(cmd)), device{*api,selectGpu(*api)},
+     // As og_main did: the device's own name goes to the crash log right after the device.
+     resources{(CrashLog::setGpu(device.properties().name), device)} {
+    gothic.setupGlobalScripts();
+    wx.emplace(device);
+    app.emplace();
+    }
 
-  Resources            resources{device};
-  Gothic               gothic;
-  GameMusic            music;
-  gothic.setupGlobalScripts();
+  static std::string_view selectGpu(const Tempest::AbstractGraphicsApi& api) {
+    const auto gpuName = selectDevice(api);
+    CrashLog::setGpu(gpuName);
+    return gpuName;
+    }
+  };
 
-  MainWindow           wx(device);
-  Tempest::Application app;
-  return app.exec();
+OgMain::Engine* OgMain::init(int argc, const char** argv) {
+  setupProcess();
+  return new Engine(argc,argv);
+  }
+
+MainWindow& OgMain::window(Engine& e) {
+  return *e.wx;
+  }
+
+void OgMain::shutdown(Engine* e) {
+  delete e;
+  }
+
+int og_main(int argc,const char** argv) {
+  std::unique_ptr<OgMain::Engine> e{OgMain::init(argc,argv)};
+  return e->app->exec();
   }

@@ -10,9 +10,10 @@
 extern "C" {
 #endif
 
-#define OG_CAPI_VERSION 13
+#define OG_CAPI_VERSION 14
 
-/* Per-frame context; only valid inside the callback that received it. */
+/* Per-frame context; only valid inside the callback that received it. Exception (v14):
+ * og_init's context is also the handle for the loop functions until og_shutdown. */
 typedef struct og_ctx og_ctx;
 
 /* Levels passed to og_callbacks.on_log. */
@@ -24,7 +25,8 @@ typedef struct og_ctx og_ctx;
 
 typedef struct og_callbacks {
   void* user;
-  /* Called once per rendered frame on the main thread, also while loading or paused.
+  /* Called once per rendered frame on the main thread, also while loading or paused
+   * (with og_init: once per og_step instead, v14).
    * Counts render() calls, not simulation ticks: some calls advance no game time.
    * Must not throw or unwind: on macOS it runs inside a dispatch block, so nothing
    * would reach og_run's catch (a Rust host wraps it in catch_unwind). May be NULL. */
@@ -49,6 +51,61 @@ int og_run(int argc, const char** argv, const og_callbacks* cb);
 
 #define OG_RUN_EXCEPTION       (-1001)
 #define OG_RUN_ALREADY_RUNNING (-1002)
+
+/* ---- Host-owned loop (v14) ---------------------------------------------------
+ * Instead of og_run, a host may own the loop (task 5.2, ADR 0021):
+ *
+ *   og_ctx* ctx; if(og_init(argc, argv, &cb, &ctx) != 0) fail;
+ *   while(og_wait_display(ctx, 50) >= 0 && og_pump_events(ctx) == 1) {
+ *     og_step(ctx, dt_ms); og_render(ctx);
+ *   }
+ *   code = og_shutdown(ctx);
+ *
+ * All on the main thread, never from inside a callback. og_init and og_run share the
+ * one-run-per-process rule. on_frame is called from og_step (once per step, after the
+ * simulation), not from og_render. After any OG_RUN_EXCEPTION the host calls
+ * og_shutdown and stops. */
+
+/* Builds the game (what og_run does before its event loop) and returns the context
+ * for the loop functions in *out_ctx. cb as for og_run (copied; cb->user must outlive
+ * og_shutdown). Returns 0, OG_RUN_ALREADY_RUNNING, or OG_RUN_EXCEPTION (logged; the
+ * partly built game is destroyed, *out_ctx stays NULL). */
+int og_init(int argc, const char** argv, const og_callbacks* cb, og_ctx** out_ctx);
+
+/* Delivers pending window/input events (at most a bounded batch per call) and runs
+ * due Tempest timers, as OpenGothic's own loop does after each event.
+ * Returns 1 while the game runs, 0 once it should exit (og_request_exit, window
+ * closed), OG_RUN_EXCEPTION, or OG_LOOP_BAD_STATE. */
+int og_pump_events(og_ctx* ctx);
+
+/* Paces the loop like stock frames: delivers events until the display's next refresh
+ * (stock OpenGothic draws one frame per refresh, from a CVDisplayLink), at most
+ * timeout_ms. Returns 1 on a refresh, 0 on timeout (no refresh: the display may be
+ * asleep, UB-21) or once the game should exit, OG_RUN_EXCEPTION, or OG_LOOP_BAD_STATE. */
+int og_wait_display(og_ctx* ctx, uint32_t timeout_ms);
+
+/* One simulation step: OpenGothic's tick with dt_ms of wall time (stock rules: game
+ * time advances by min(dt_ms, 50); nothing while loading, paused or in a video), then
+ * the animation and camera update, then on_frame. Returns the game ms advanced (>= 0;
+ * the host measures its next dt from now), OG_STEP_TOO_SHORT if dt_ms < 5 (nothing
+ * advanced, the time is not consumed: the host passes it again next step; on_frame
+ * still runs; except in benchmark-CI mode while loading, where stock skips the whole
+ * frame and so does this), OG_RUN_EXCEPTION, or OG_LOOP_BAD_STATE. */
+int og_step(og_ctx* ctx, uint32_t dt_ms);
+
+/* Draws and presents one frame (UI, world, video capture) and sleeps for the game's
+ * frame cap. Returns 0, OG_RUN_EXCEPTION, or OG_LOOP_BAD_STATE. */
+int og_render(og_ctx* ctx);
+
+/* Destroys the game (as og_run does when its loop ends) and detaches the callbacks;
+ * ctx is invalid afterwards. Returns the game's exit code (0) or OG_LOOP_BAD_STATE
+ * (a destructor that throws terminates the process, as under og_run). */
+int og_shutdown(og_ctx* ctx);
+
+/* No og_init engine (never initialised, shut down, or started by og_run), a ctx that
+ * is not og_init's, or a call from inside a callback. */
+#define OG_LOOP_BAD_STATE (-1003)
+#define OG_STEP_TOO_SHORT (-1004)
 
 /* 0-based index of the current frame. */
 uint64_t og_ctx_frame(const og_ctx* ctx);

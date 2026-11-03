@@ -12,4 +12,17 @@ int og_main(int argc, const char** argv);
 
 #ifdef __cplusplus
 }
+
+class MainWindow;
+
+// opengothic-rs (task 5.2): og_main in three parts, for a host that owns the loop.
+// init does what og_main does before its event loop (same process-wide setup, same
+// objects, same order) and may throw like og_main; shutdown destroys the objects in
+// the order og_main's stack unwound. Main thread only.
+namespace OgMain {
+  struct Engine;
+  Engine*     init(int argc, const char** argv);
+  MainWindow& window(Engine& e);
+  void        shutdown(Engine* e);
+  }
 #endif
