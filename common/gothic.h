@@ -222,7 +222,6 @@ class Gothic final {
   private:
     VersionInfo                             vinfo;
     Options                                 opts;
-    std::mt19937                            randGen;
     uint16_t                                pauseSum=0;
     bool                                    isMarvin       = false;
     bool                                    godMode        = false;

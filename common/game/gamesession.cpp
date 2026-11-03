@@ -14,6 +14,7 @@
 #include "serialize.h"
 #include "camera.h"
 #include "gothic.h"
+#include "capi/ogrng.h"
 
 using namespace Tempest;
 
@@ -167,6 +168,12 @@ GameSession::GameSession(Serialize &fin) {
 
   fin.setEntry("game/camera");
   cam->load(fin,wrld->player());
+
+  // opengothic-rs: restored last, so draws made while loading don't count (task 5.4).
+  // Saves from stock OpenGothic have no such entry: the streams just continue.
+  if(fin.setEntry("opengothic-rs/rng"))
+    OgRng::load(fin); else
+    Tempest::Log::i("ogrng: save has no opengothic-rs/rng entry, streams continue");
   Gothic::inst().setLoadingProgress(96);
   }
 
@@ -223,6 +230,10 @@ void GameSession::save(Serialize &fout, std::string_view name, const Pixmap& scr
 
   fout.setEntry("game/daedalus");
   vm->saveVar(fout);
+
+  // opengothic-rs: fork-only entry (task 5.4); stock OpenGothic never opens it.
+  fout.setEntry("opengothic-rs/rng");
+  OgRng::save(fout);
   Gothic::inst().setLoadingProgress(80);
   }
 
@@ -277,9 +288,9 @@ Tempest::SoundEffect GameSession::loadSound(const Tempest::Sound &raw) {
     }
   }
 
-Tempest::SoundEffect GameSession::loadSound(const SoundFx &fx, bool& looped) {
+Tempest::SoundEffect GameSession::loadSound(const SoundFx &fx, bool& looped, uint32_t variant) {
   try {
-    return fx.load(sound,looped);
+    return fx.load(sound,looped,variant);
     }
   catch(std::bad_alloc&) {
     Tempest::Log::d("Exceeding OpenAL source limit");

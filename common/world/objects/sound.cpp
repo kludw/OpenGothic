@@ -3,6 +3,7 @@
 #include "world/world.h"
 #include "utils/fileext.h"
 #include "gothic.h"
+#include "capi/ogrng.h"
 
 Sound::Sound() {
   }
@@ -31,7 +32,14 @@ Sound::Sound(World& world, Sound::Type type, std::string_view s, const Tempest::
   if(snd==nullptr)
     return;
 
-  *this = owner.implAddSound(*snd,pos,range);
+  // opengothic-rs: the parallel animation update (WorldObjects::updateAnimation) reaches
+  // here from worker threads, so the variant is a keyed draw: the same sound at the same
+  // place and tick picks the same variant whatever the threads' order (task 5.4).
+  uint64_t key = OgRng::hash(OgRng::HashStart,cname.data(),cname.size());
+  key = OgRng::hash(key,&pos,sizeof(pos));
+  const uint64_t tick = world.tickCount();
+  key = OgRng::hash(key,&tick,sizeof(tick));
+  *this = owner.implAddSound(*snd,pos,range,OgRng::keyed(OgRng::Sound,key));
   if(isEmpty())
     return;
 

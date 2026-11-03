@@ -8,6 +8,7 @@
 #include "skeleton.h"
 #include "pose.h"
 #include "resources.h"
+#include "capi/ogrng.h"
 
 using namespace Tempest;
 
@@ -136,7 +137,7 @@ const Animation::Sequence* AnimationSolver::implSolveAnim(AnimationSolver::Anim 
       bool g2 = Gothic::inst().version().game==2;
       if(g2) {
         const Animation::Sequence* s=nullptr;
-        switch(std::rand()%3) {
+        switch(OgRng::next(OgRng::Anim)%3) {
           case 0: s = solveFrm("T_%sPARADE_0",   st); break;
           case 1: s = solveFrm("T_%sPARADE_0_A2",st); break;
           case 2: s = solveFrm("T_%sPARADE_0_A3",st); break;

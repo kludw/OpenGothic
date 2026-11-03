@@ -8,6 +8,7 @@
 #include "world/world.h"
 #include "objvisual.h"
 #include "gothic.h"
+#include "capi/ogrng.h"
 
 using namespace Tempest;
 
@@ -934,7 +935,7 @@ bool MdlVisual::startAnimDialog(Npc &npc) {
     return true;
 
   const uint16_t count = Gothic::inst().version().dialogGestureCount();
-  const int      id    = std::rand()%count + 1;
+  const int      id    = int(OgRng::next(OgRng::Visual)%count) + 1;
 
   char name[32]={};
   std::snprintf(name,sizeof(name),"T_DIALOGGESTURE_%02d",id);

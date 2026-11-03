@@ -17,6 +17,7 @@
 #include "utils/fileutil.h"
 #include "commandline.h"
 #include "gothic.h"
+#include "capi/ogrng.h"
 
 using namespace Tempest;
 
@@ -1488,7 +1489,7 @@ void GameScript::tick(uint64_t dt) {
   }
 
 uint32_t GameScript::rand(uint32_t max) {
-  return uint32_t(randGen())%max;
+  return OgRng::next(OgRng::Gameplay)%max;
   }
 
 Npc* GameScript::findNpc(zenkit::DaedalusSymbol* s) {
@@ -3339,7 +3340,7 @@ int GameScript::hlp_getinstanceid(std::shared_ptr<zenkit::DaedalusInstance> inst
 
 int GameScript::hlp_random(int bound) {
   uint32_t mod = uint32_t(std::max(1,bound));
-  return int32_t(randGen() % mod);
+  return int32_t(OgRng::next(OgRng::Gameplay) % mod);
   }
 
 bool GameScript::hlp_isvalidnpc(std::shared_ptr<zenkit::INpc> npcRef) {

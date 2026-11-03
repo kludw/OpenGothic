@@ -460,7 +460,6 @@ class GameScript final {
     GameSession&                                                owner;
     zenkit::DaedalusVm                                          vm;
     int32_t                                                     vmLang = -1;
-    std::mt19937                                                randGen;
     NpcProcessPolicy                                            aiProcessPolicy = NpcProcessPolicy::AiNormal;
 
     std::unique_ptr<DirectMemory>                               dma;

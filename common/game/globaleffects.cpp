@@ -5,6 +5,7 @@
 #include "world/objects/globalfx.h"
 #include "world/world.h"
 #include "graphics/visualfx.h"
+#include "capi/ogrng.h"
 
 using namespace Tempest;
 
@@ -83,9 +84,9 @@ void GlobalEffects::shake(Vec3& origin) {
     i.tLast = time;
 
     Vec3 off;
-    off.x = float(std::rand()%1000)/1000.f;
-    off.y = float(std::rand()%1000)/1000.f;
-    off.z = float(std::rand()%1000)/1000.f;
+    off.x = float(OgRng::next(OgRng::Visual)%1000)/1000.f;
+    off.y = float(OgRng::next(OgRng::Visual)%1000)/1000.f;
+    off.z = float(OgRng::next(OgRng::Visual)%1000)/1000.f;
 
     // more interesting curve
     float a = generator(time, i.timeLoop);

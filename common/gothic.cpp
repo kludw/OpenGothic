@@ -25,6 +25,7 @@
 
 #include "commandline.h"
 #include "mainwindow.h"
+#include "capi/ogrng.h"
 
 using namespace Tempest;
 using namespace FileUtil;
@@ -430,7 +431,7 @@ void Gothic::emitGlobalSound(std::string_view sfx) {
 void Gothic::emitGlobalSound(const SoundFx *sfx) {
   if(sfx!=nullptr) {
     bool loop = false;
-    auto s = sfx->load(sndDev,loop);
+    auto s = sfx->load(sndDev,loop,OgRng::next(OgRng::Sound));
     s.play();
 
     for(size_t i=0;i<sndStorage.size();){
@@ -1073,7 +1074,7 @@ float Gothic::inttofloat(int i) {
 
 int Gothic::hlp_random(int max) {
   auto mod = uint32_t(std::max(1, max));
-  return static_cast<int32_t>(randGen() % mod);
+  return static_cast<int32_t>(OgRng::next(OgRng::Gameplay) % mod);
   }
 
 bool Gothic::hlp_strcmp(std::string_view a, std::string_view b) {

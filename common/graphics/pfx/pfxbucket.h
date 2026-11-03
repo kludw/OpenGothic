@@ -165,7 +165,6 @@ class PfxBucket {
     std::vector<Block>          block;
     bool                        forceUpdate[Resources::MaxFramesInFlight] = {};
 
-    static std::mt19937         rndEngine;
 
     friend class PfxEmitter;
   };

@@ -65,7 +65,7 @@ class WorldSound final {
     void    initSlot(Effect& slot);
     bool    setMusic(std::string_view zone, GameMusic::Tags tags);
 
-    Sound   implAddSound(const SoundFx& s, const Tempest::Vec3& pos, float rangeMax);
+    Sound   implAddSound(const SoundFx& s, const Tempest::Vec3& pos, float rangeMax, uint32_t variant);
     Sound   implAddSound(Tempest::SoundEffect&& s, const Tempest::Vec3& pos, float rangeMax);
 
     GameSession&                            game;

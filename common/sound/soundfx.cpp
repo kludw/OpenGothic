@@ -8,6 +8,7 @@
 
 #include "resources.h"
 #include "utils/string_frm.h"
+#include "capi/ogrng.h"
 
 SoundFx::SoundVar::SoundVar(const zenkit::ISoundEffect& sfx, Tempest::Sound &&snd)
   :snd(std::move(snd)),vol(float(sfx.vol)/127.f),loop(sfx.loop){
@@ -46,10 +47,10 @@ SoundFx::SoundFx(Tempest::Sound &&snd) {
     inst.emplace_back(127.f,std::move(snd));
   }
 
-Tempest::SoundEffect SoundFx::load(Tempest::SoundDevice &dev, bool& loop) const {
+Tempest::SoundEffect SoundFx::load(Tempest::SoundDevice &dev, bool& loop, uint32_t variant) const {
   if(inst.size()==0)
     return Tempest::SoundEffect();
-  auto&                var    = inst[size_t(std::rand())%inst.size()];
+  auto&                var    = inst[size_t(variant)%inst.size()];
   Tempest::SoundEffect effect = dev.load(var.snd);
   effect.setVolume(var.vol);
   loop = var.loop;

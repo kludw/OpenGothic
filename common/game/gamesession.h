@@ -48,7 +48,7 @@ class GameSession final {
     Camera&      camera()       { return     *cam; }
 
     auto         loadSound(const Tempest::Sound& raw) -> Tempest::SoundEffect;
-    auto         loadSound(const SoundFx&        fx, bool& looped)  -> Tempest::SoundEffect;
+    auto         loadSound(const SoundFx&        fx, bool& looped, uint32_t variant)  -> Tempest::SoundEffect;
 
     Npc*         player();
     void         updateListenerPos(const Camera::ListenerPos& lpos);

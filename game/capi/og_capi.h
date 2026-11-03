@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-#define OG_CAPI_VERSION 15
+#define OG_CAPI_VERSION 16
 
 /* Per-frame context; only valid inside the callback that received it. Exception (v14):
  * og_init's context is also the handle for the loop functions until og_shutdown. */
@@ -529,6 +529,35 @@ int og_video_request(og_ctx* ctx, uint32_t max_width, uint64_t tag);
  * 8 finished copies are kept; older ones are dropped (logged), so poll every frame.
  * Only inside on_frame. */
 int og_video_poll(og_ctx* ctx, uint8_t* buf, size_t cap, og_video_frame* info);
+
+/* ---- Random streams (v16) ------------------------------------------------------
+ * Every random draw in the engine comes from one of four named, seeded streams
+ * (task 5.4, ADR 0021): a visual or audio draw never shifts gameplay draws. Their states
+ * are saved in the save entry "opengothic-rs/rng" and restored by loading that save. */
+
+#define OG_RNG_GAMEPLAY 0  /* script Hlp_Random (game and menu), damage, fight AI, triggers */
+#define OG_RNG_ANIM     1  /* animation variants that change timing (G2 parade) */
+#define OG_RNG_SOUND    2  /* ambient restart delays, SFX variants */
+#define OG_RNG_VISUAL   3  /* dialog gestures, screen shake, particles */
+#define OG_RNG_STREAMS  4
+
+/* Seeds every stream from seed (each stream: splitmix64(seed + index), its mt19937 seeded
+ * with the low 32 bits) and resets the counters. Call before og_init/og_run; without a
+ * call the streams are seeded from the OS's random source at the first draw (logged).
+ * Any thread, any time (reseeding a running game is allowed but breaks replays). */
+void og_rng_seed(uint64_t seed);
+
+typedef struct og_rng_info {
+  uint64_t draws;        /* sequential draws since the seed (or as restored by a load) */
+  uint64_t keyed_draws;  /* order-independent draws (SFX variants from worker threads) */
+  uint64_t digest;       /* FNV-1a 64 over the sequential draws (32-bit values, LE), in order */
+  uint64_t keyed_sum;    /* wrapping sum of the keyed draws */
+  uint64_t state_hash;   /* FNV-1a 64 of the generator's state */
+} og_rng_info;
+
+/* Reads one stream's counters: OG_CTL_OK, or OG_CTL_BAD_ARGS (stream >= OG_RNG_STREAMS,
+ * NULL out). Any thread, any time, also before og_init and after og_shutdown. */
+int og_rng_read(uint32_t stream, og_rng_info* out);
 
 #ifdef __cplusplus
 }

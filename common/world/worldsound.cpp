@@ -14,6 +14,7 @@
 #include "gamemusic.h"
 #include "gothic.h"
 #include "resources.h"
+#include "capi/ogrng.h"
 
 const float WorldSound::maxDist   = 7000; // 70 meters
 const float WorldSound::talkRange = 2000;
@@ -134,9 +135,9 @@ Sound WorldSound::addDlgSound(std::string_view s, const Tempest::Vec3& pos, floa
   return ret;
   }
 
-Sound WorldSound::implAddSound(const SoundFx& eff, const Tempest::Vec3& pos, float rangeMax) {
+Sound WorldSound::implAddSound(const SoundFx& eff, const Tempest::Vec3& pos, float rangeMax, uint32_t variant) {
   bool loop = false;
-  auto ret = implAddSound(game.loadSound(eff,loop), pos,rangeMax);
+  auto ret = implAddSound(game.loadSound(eff,loop,variant), pos,rangeMax);
   ret.setLooping(loop);
   return ret;
   }
@@ -190,7 +191,7 @@ void WorldSound::tick(Npc& player) {
     if(snd==nullptr)
       continue;
 
-    i.current = implAddSound(*snd,i.pos,i.sndRadius);
+    i.current = implAddSound(*snd,i.pos,i.sndRadius,OgRng::next(OgRng::Sound));
     if(!i.current.isEmpty()) {
       effect.emplace_back(i.current.val);
       i.current.play();
@@ -198,7 +199,7 @@ void WorldSound::tick(Npc& player) {
 
     i.restartTimeout = owner.tickCount() + i.delay;
     if(i.delayVar>0)
-      i.restartTimeout += uint64_t(std::rand())%i.delayVar;
+      i.restartTimeout += uint64_t(OgRng::next(OgRng::Sound))%i.delayVar;
 
     if(!i.loop)
       i.active = false;

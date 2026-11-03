@@ -15,7 +15,8 @@ class SoundFx {
     SoundFx(SoundFx&&)=default;
     SoundFx& operator=(SoundFx&&)=default;
 
-    Tempest::SoundEffect load(Tempest::SoundDevice& dev, bool& loop) const;
+    // variant: a random draw picking one of the sound's variants (opengothic-rs: from OgRng's sound stream)
+    Tempest::SoundEffect load(Tempest::SoundDevice& dev, bool& loop, uint32_t variant) const;
 
   private:
     struct SoundVar {

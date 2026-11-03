@@ -7,6 +7,7 @@
 #include "pfxobjects.h"
 #include "particlefx.h"
 #include "world/objects/npc.h"
+#include "capi/ogrng.h"
 
 using namespace Tempest;
 
@@ -29,7 +30,6 @@ float PfxBucket::ParState::lifeTime() const {
   return 1.f-life/float(maxLife);
   }
 
-std::mt19937 PfxBucket::rndEngine;
 
 bool PfxBucket::Draw::isEmpty() const {
   return (pfxGpu.byteSize()==0);
@@ -192,7 +192,7 @@ bool PfxBucket::shrink() {
   }
 
 float PfxBucket::randf() {
-  return float(rndEngine()%10000)/10000.f;
+  return float(OgRng::next(OgRng::Visual)%10000)/10000.f;
   }
 
 float PfxBucket::randf(float base, float var) {
