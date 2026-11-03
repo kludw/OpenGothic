@@ -458,6 +458,8 @@ void MainWindow::metricsEvent(DisplayMetricsEvent& event) {
   }
 
 void MainWindow::mouseDownEvent(MouseEvent &event) {
+  if(OgHooks::inputReplay)
+    return;  // opengothic-rs: exact replay feeds PlayerControl itself (og_apply_input)
   if(event.button<sizeof(mouseP))
     mouseP[event.button]=true;
   auto act     = keycodec.tr(event);
@@ -466,6 +468,8 @@ void MainWindow::mouseDownEvent(MouseEvent &event) {
   }
 
 void MainWindow::mouseUpEvent(MouseEvent &event) {
+  if(OgHooks::inputReplay)
+    return;  // opengothic-rs: exact replay feeds PlayerControl itself (og_apply_input)
   auto act     = keycodec.tr(event);
   auto mapping = keycodec.mapping(event);
   player.onKeyReleased(act,mapping);
@@ -474,6 +478,8 @@ void MainWindow::mouseUpEvent(MouseEvent &event) {
   }
 
 void MainWindow::mouseDragEvent(MouseEvent &event) {
+  if(OgHooks::inputReplay)
+    return;  // opengothic-rs: exact replay feeds PlayerControl itself (og_apply_input)
   const bool fs = SystemApi::isFullscreen(hwnd());
   if(!mouseP[Event::ButtonLeft] && !fs)
     return;
@@ -483,6 +489,8 @@ void MainWindow::mouseDragEvent(MouseEvent &event) {
   }
 
 void MainWindow::mouseMoveEvent(MouseEvent &event) {
+  if(OgHooks::inputReplay)
+    return;  // opengothic-rs: exact replay feeds PlayerControl itself (og_apply_input)
   processMouse(event,SystemApi::isFullscreen(hwnd()));
   }
 
@@ -547,11 +555,15 @@ void MainWindow::onSettings() {
   }
 
 void MainWindow::mouseWheelEvent(MouseEvent &event) {
+  if(OgHooks::inputReplay)
+    return;  // opengothic-rs: exact replay feeds PlayerControl itself (og_apply_input)
   if(auto camera = Gothic::inst().camera())
     camera->changeZoom(event.delta);
   }
 
 void MainWindow::keyDownEvent(KeyEvent &event) {
+  if(OgHooks::inputReplay)
+    return;  // opengothic-rs: exact replay feeds PlayerControl itself (og_apply_input)
   if(video.isActive()){
     event.accept();
     video.keyDownEvent(event);
@@ -620,6 +632,8 @@ void MainWindow::keyDownEvent(KeyEvent &event) {
   }
 
 void MainWindow::keyRepeatEvent(KeyEvent& event) {
+  if(OgHooks::inputReplay)
+    return;  // opengothic-rs: exact replay feeds PlayerControl itself (og_apply_input)
   if(uiKeyUp==&video){
     if(event.isAccepted())
       return;
@@ -649,6 +663,8 @@ void MainWindow::keyRepeatEvent(KeyEvent& event) {
   }
 
 void MainWindow::keyUpEvent(KeyEvent &event) {
+  if(OgHooks::inputReplay)
+    return;  // opengothic-rs: exact replay feeds PlayerControl itself (og_apply_input)
   if(uiKeyUp==&video){
     video.keyUpEvent(event);
     if(event.isAccepted())

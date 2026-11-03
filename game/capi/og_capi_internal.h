@@ -4,6 +4,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
+#include <utility>
+
+#include "capi/oghooks.h"
 
 // Per-frame context behind the opaque og_ctx of og_capi.h.
 struct og_ctx {
@@ -18,7 +21,21 @@ namespace OgCapi {
   bool hasLogSink();
   // Forwards one line (level = OG_LOG_*); false if there is no sink (nothing done).
   bool log(int level, const char* source, const char* msg);
+  // og_input.cpp: on = queue PlayerControl's input for og_read_input (between attach
+  // and detach of og_run/og_init); off = no queue, real input restored. Main thread.
+  void inputAttach(bool on);
   }
+
+// While alive, PlayerControl's input is not queued for og_read_input: input the seam
+// itself hands PlayerControl (motor commands, og_apply_input) follows from host
+// requests that are recorded on their own (task 5.6).
+struct OgMuteInput {
+  OgMuteInput() : saved(std::exchange(OgHooks::onPlayerInput,nullptr)) {}
+  ~OgMuteInput() { OgHooks::onPlayerInput = saved; }
+  OgMuteInput(const OgMuteInput&) = delete;
+  OgMuteInput& operator=(const OgMuteInput&) = delete;
+  void (*saved)(int,int,int,int,float,float);
+  };
 
 // FNV-1a 64: stable within a process, enough to notice a change between two reads
 // (og_read_watch, og_read_world_trace).

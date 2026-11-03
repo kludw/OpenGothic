@@ -163,6 +163,7 @@ bool inReach(const Npc& pl, const Item& it) {
 void press(KeyCodec::Action k) {
   if(OgHooks::playerControl==nullptr)
     return;
+  OgMuteInput mute;
   OgHooks::playerControl->onKeyPressed(k,Tempest::Event::K_NoKey,KeyCodec::Mapping::Secondary);
   act.key = k;
   }
@@ -170,8 +171,10 @@ void press(KeyCodec::Action k) {
 void releaseKey() {
   if(act.key==KeyCodec::Idle)
     return;
-  if(OgHooks::playerControl!=nullptr)
+  if(OgHooks::playerControl!=nullptr) {
+    OgMuteInput mute;
     OgHooks::playerControl->onKeyReleased(act.key,KeyCodec::Mapping::Secondary);
+    }
   act.key = KeyCodec::Idle;
   }
 

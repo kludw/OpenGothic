@@ -35,4 +35,9 @@ namespace OgHooks {
   extern bool    hostWalksPlayer;
   extern bool    hostFightsForPlayer;
   extern int32_t playerFightTactic;
+  // Exact replay (task 5.6). onPlayerInput: called by PlayerControl for every key press
+  // (kind 1), release (2) and mouse rotation (3) it receives. inputReplay: the window
+  // drops real keyboard and mouse input.
+  extern void  (*onPlayerInput)(int kind, int action, int key, int mapping, float dx, float dy);
+  extern bool    inputReplay;
   }

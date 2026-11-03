@@ -69,12 +69,14 @@ void attach(const og_callbacks* cb) {
   callbacks = cb!=nullptr ? *cb : og_callbacks{};
   ctx       = og_ctx{};
   OgHooks::onFrame = onFrame;
+  OgCapi::inputAttach(true);
   logUser.store(callbacks.user,std::memory_order_release);
   logFn.store(callbacks.on_log,std::memory_order_release);
   }
 
 void detach() {
   OgHooks::onFrame = nullptr;
+  OgCapi::inputAttach(false);
   logFn.store(nullptr,std::memory_order_release);
   callbacks        = og_callbacks{};
   }

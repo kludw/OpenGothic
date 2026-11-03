@@ -47,6 +47,8 @@ void PlayerControl::setTarget(Npc *other) {
   }
 
 void PlayerControl::onKeyPressed(KeyCodec::Action a, Tempest::KeyEvent::KeyType key, KeyCodec::Mapping mapping) {
+  if(OgHooks::onPlayerInput!=nullptr)
+    OgHooks::onPlayerInput(1,int(a),int(key),int(mapping),0.f,0.f);
   auto       w    = Gothic::inst().world();
   auto       c    = Gothic::inst().camera();
   auto       pl   = w  ? w->player() : nullptr;
@@ -201,6 +203,8 @@ void PlayerControl::onKeyPressed(KeyCodec::Action a, Tempest::KeyEvent::KeyType 
   }
 
 void PlayerControl::onKeyReleased(KeyCodec::Action a, KeyCodec::Mapping mapping) {
+  if(OgHooks::onPlayerInput!=nullptr)
+    OgHooks::onPlayerInput(2,int(a),0,int(mapping),0.f,0.f);
   ctrl[a] = false;
 
   handleMovementAction(KeyCodec::ActionMapping{a, mapping}, false);
@@ -249,6 +253,8 @@ bool PlayerControl::isPressed(KeyCodec::Action a) const {
   }
 
 void PlayerControl::onRotateMouse(float dAngleX, float dAngleY) {
+  if(OgHooks::onPlayerInput!=nullptr)
+    OgHooks::onPlayerInput(3,0,0,0,dAngleX,dAngleY);
   rotMouse  += dAngleX;
   rotMouseY += dAngleY;
   }

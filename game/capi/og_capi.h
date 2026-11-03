@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-#define OG_CAPI_VERSION 17
+#define OG_CAPI_VERSION 18
 
 /* Per-frame context; only valid inside the callback that received it. Exception (v14):
  * og_init's context is also the handle for the loop functions until og_shutdown. */
@@ -610,6 +610,42 @@ typedef struct og_trace_visitor {
  * visited), OG_STATE_BAD_ARGS (outside on_frame, bad visitor), OG_STATE_EXCEPTION
  * (logged; the visit may be partial). Only inside on_frame with its ctx (main thread). */
 int og_read_world_trace(og_ctx* ctx, const og_trace_visitor* v);
+
+/* ---- Player input (v18) -------------------------------------------------------
+ * The input that reaches PlayerControl, for exact replays (task 5.6): key presses and
+ * releases (keyboard and mouse buttons, after the key bindings) and the mouse rotation
+ * tickMouse hands the player. Menus, dialogs and the camera take input before
+ * PlayerControl and are not covered. */
+
+#define OG_INPUT_KEY_DOWN 1  /* PlayerControl::onKeyPressed(action, key, mapping) */
+#define OG_INPUT_KEY_UP   2  /* PlayerControl::onKeyReleased(action, mapping) */
+#define OG_INPUT_ROTATE   3  /* PlayerControl::onRotateMouse(dx, dy) */
+
+typedef struct og_input_event {
+  uint32_t kind;     /* OG_INPUT_* */
+  uint32_t action;   /* KeyCodec::Action (KEY_DOWN/KEY_UP) */
+  uint32_t key;      /* Tempest key code (KEY_DOWN; 0 = none, e.g. a mouse button) */
+  uint32_t mapping;  /* 0 primary, 1 secondary binding (KEY_DOWN/KEY_UP) */
+  float    dx, dy;   /* degrees (ROTATE) */
+} og_input_event;
+
+/* Moves up to cap queued events (oldest first) into out and writes how many to *count.
+ * Events queue from og_init on, in the order PlayerControl received them; input the seam
+ * gives PlayerControl itself (motor commands, og_apply_input) is not queued. At most 4096
+ * wait; older ones are dropped. OG_CTL_OK; OG_CTL_REJECTED (events were dropped since the
+ * last call; *count and out are still filled); OG_CTL_BAD_ARGS (outside on_frame, NULL
+ * out or count with cap > 0). Only inside on_frame (main thread). */
+int og_read_input(og_ctx* ctx, og_input_event* out, uint32_t cap, uint32_t* count);
+
+/* on = 1: the window drops real keyboard and mouse input (keys, buttons, movement,
+ * wheel), so only og_apply_input reaches the game; 0 restores it. OG_CTL_OK or
+ * OG_CTL_BAD_ARGS (outside on_frame, on not 0/1). Only inside on_frame. */
+int og_set_input_replay(og_ctx* ctx, int on);
+
+/* Hands one event to PlayerControl as if the window had. OG_CTL_OK, OG_CTL_BAD_ARGS
+ * (outside on_frame, NULL e, unknown kind, action/key/mapping out of range), OG_CTL_EXCEPTION.
+ * Only inside on_frame. */
+int og_apply_input(og_ctx* ctx, const og_input_event* e);
 
 #ifdef __cplusplus
 }
