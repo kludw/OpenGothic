@@ -22,4 +22,10 @@ namespace OgHooks {
   // Bumped when a save ends in LoadState::FailedSave (Gothic::finishLoading), the only
   // trace a failed save leaves once the state is back to Idle.
   extern uint64_t saveFailures;
+  // Seam attack/flee (task 2.11). hostDrivesPlayer: PlayerControl leaves the player's
+  // movement alone. hostFightsForPlayer: the NPC fight AI (Npc::implAttack) drives the
+  // player, with playerFightTactic if the hero has none of its own (fight_tactic 0).
+  extern bool    hostDrivesPlayer;
+  extern bool    hostFightsForPlayer;
+  extern int32_t playerFightTactic;
   }

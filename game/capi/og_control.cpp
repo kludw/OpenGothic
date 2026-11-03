@@ -52,11 +52,19 @@ constexpr uint64_t TAKE_TIMEOUT = 1000;
 // use_item: time to get the use animation going, then to finish it.
 constexpr uint64_t USE_START    = 1000;
 constexpr uint64_t USE_TIMEOUT  = 15000;
+constexpr uint64_t DRAW_TIMEOUT = 3000;
+// The fight AI re-queues AI_Attack while it finds no move; this long means it never will.
+constexpr uint64_t FIGHT_STUCK  = 5000;
+constexpr uint64_t FLEE_TIMEOUT = 30000;
+constexpr float    FLEE_SAFE    = 1500;
+// Farther than this, attack walks the waynet first: the fight AI's own pathing went back
+// and forth at ~20 m from a field raider by Xardas' tower for minutes.
+constexpr float    ATTACK_NEAR  = 500;
 constexpr float    TURN_DONE    = 2.f;  // degrees
 // Upper bound for wait: keeps the seconds->ms conversion defined (og_capi.h).
 constexpr float    WAIT_MAX_S   = 86400.f;
 
-enum class Kind : uint8_t { None, GoTo, Turn, TalkTo, Wait, PickUp, Step, Jump, UseItem, Done };
+enum class Kind : uint8_t { None, GoTo, Turn, TalkTo, Wait, PickUp, Step, Jump, UseItem, Attack, Flee, Done };
 
 struct Action {
   Kind             kind  = Kind::None;
@@ -80,6 +88,10 @@ struct Action {
   size_t           cls     = 0;
   size_t           count   = 0;
   bool             seenUse = false;
+  // attack/flee: the OgHooks flags are set; when the last AI_Attack/AI_Flee was queued.
+  bool             fight   = false;
+  uint64_t         queued  = 0;
+  uint64_t         logged  = 0;
   };
 
 Action act;
@@ -136,13 +148,77 @@ void releaseKey() {
   act.key = KeyCodec::Idle;
   }
 
+// Gives the player back to PlayerControl after attack/flee. pl: as in cancel().
+void endFight(Npc* pl) {
+  if(!act.fight)
+    return;
+  OgHooks::hostDrivesPlayer    = false;
+  OgHooks::hostFightsForPlayer = false;
+  act.fight = false;
+  if(pl==nullptr || act.generation!=OgHooks::worldGeneration)
+    return;
+  // Left-over moves would make the next attack or flee act on them (implAttack).
+  pl->ogClearFightMoves();
+  pl->clearGoTo();
+  }
+
+// Puts the weapon away after an attack (talk_to and use_item need free hands; the next
+// attack draws again). The game refuses while a swing still plays: then the attack's
+// sheathe phase retries; elsewhere (cancel, fail) it is logged.
+void sheathe(Npc* pl) {
+  if(act.kind!=Kind::Attack || act.phase<1 || pl==nullptr || act.generation!=OgHooks::worldGeneration)
+    return;
+  if(pl->weaponState()!=WeaponState::NoWeapon && !pl->closeWeapon(false))
+    Tempest::Log::i("og_control: the weapon could not be put away (animation busy)");
+  }
+
 // Ends the current action without reporting it. pl: the player of the action's world,
 // or nullptr if that world is gone.
 void cancel(Npc* pl) {
   releaseKey();
+  endFight(pl);
+  sheathe(pl);
   if(act.usesAi && pl!=nullptr && act.generation==OgHooks::worldGeneration)
     pl->clearAiQueue();
   act = Action{};
+  }
+
+// The nearest NPC that is up and has the player as its target with a weapon (or claws)
+// out, i.e. is fighting the player.
+Npc* nearestAttacker(World& w, Npc& pl) {
+  Npc*  best = nullptr;
+  float bd   = 0;
+  for(uint32_t i=0; i<w.npcCount(); ++i) {
+    Npc* n = w.npcById(i);
+    if(n==nullptr || n==&pl || n->isDown() || n->target()!=&pl || n->weaponState()==WeaponState::NoWeapon)
+      continue;
+    const float d = dist(pl,n->position());
+    if(best==nullptr || d<bd) {
+      best = n;
+      bd   = d;
+      }
+    }
+  return best;
+  }
+
+// Takes the player from PlayerControl. attack: also lets the NPC fight AI drive it;
+// heroes have no fight tactic of their own (0 has no moves), so they fight like a strong
+// human. Flee only runs (AI_Flee), with the fight AI off so a hit can't turn it around.
+bool startFight(World& w, bool attack, std::string& why) {
+  if(attack) {
+    auto* sym = w.script().getVm().find_symbol_by_name("FAI_HUMAN_STRONG");
+    if(sym==nullptr) {
+      why = "the scripts define no FAI_HUMAN_STRONG fight tactic";
+      return false;
+      }
+    OgHooks::playerFightTactic   = sym->get_int();
+    OgHooks::hostFightsForPlayer = true;
+    }
+  OgHooks::hostDrivesPlayer = true;
+  act.fight = true;
+  Tempest::Log::i("og_control: ",attack ? "fight AI drives the player (tactic for heroes " : "player flees (",
+                  OgHooks::playerFightTactic,")");
+  return true;
   }
 
 struct Current {
@@ -431,6 +507,28 @@ int submit(const og_command& cmd, char* out, size_t cap) {
     case OG_CMD_JUMP:
       a.kind = Kind::Jump;
       break;
+    case OG_CMD_ATTACK: {
+      og_target t = cmd.target;
+      t.kind = OG_TARGET_NPC;
+      if(!resolveTarget(w,pl,t,a,why))
+        return reject(out,cap,why);
+      if(ogIds().findNpc(w,a.id)->isDown())
+        return reject(out,cap,"the NPC is already down");
+      a.kind  = Kind::Attack;
+      a.until = a.start+DRAW_TIMEOUT;
+      a.phase = dist(pl,ogIds().findNpc(w,a.id)->position())>ATTACK_NEAR ? -1 : 0;
+      break;
+      }
+    case OG_CMD_FLEE: {
+      Npc* from = nearestAttacker(w,pl);
+      if(from==nullptr)
+        return reject(out,cap,"nobody is fighting the hero; nothing to flee from");
+      a.kind   = Kind::Flee;
+      a.target = OG_TARGET_NPC;
+      a.id     = ogIds().npc(*from);
+      a.until  = a.start+FLEE_TIMEOUT;
+      break;
+      }
     case OG_CMD_USE_ITEM: {
       std::string name;
       Item* it = heldItem(w,pl,cmd.instance,a.cls,name,why);
@@ -519,6 +617,12 @@ int submit(const og_command& cmd, char* out, size_t cap) {
         pushGoTo(w,pl,act,why);
       break;
       }
+    case Kind::Attack:
+      if(act.phase==-1 && !pushGoTo(w,pl,act,why)) {
+        act = Action{};
+        return reject(out,cap,why);
+        }
+      break;
     case Kind::Step:
       if(act.until>act.start)
         press(key);
@@ -530,8 +634,9 @@ int submit(const og_command& cmd, char* out, size_t cap) {
   return OG_CTL_OK;
   }
 
-int finish() {
+int finish(Npc* pl) {
   releaseKey();
+  endFight(pl);
   act = Action{};
   return OG_ACTION_FINISHED;
   }
@@ -556,7 +661,7 @@ int tickTurn(World& w, Npc& pl, char* out, size_t cap) {
   const bool  left = rest>0;
   const bool  passed = (act.key==KeyCodec::RotateL && !left) || (act.key==KeyCodec::RotateR && left);
   if(std::fabs(rest)<=TURN_DONE || passed)
-    return finish();
+    return finish(&pl);
   if(w.tickCount()>act.start+TURN_TIMEOUT)
     return fail(out,cap,&pl,"could not turn (blocked?)");
   const KeyCodec::Action want = left ? KeyCodec::RotateL : KeyCodec::RotateR;
@@ -578,7 +683,7 @@ int update(char* out, size_t cap) {
   const uint64_t now = w.tickCount();
 
   if(act.kind==Kind::Done)
-    return finish();
+    return finish(&pl);
   // Nothing may act on the world while the simulation stands still (interact() would
   // run take/dialog scripts while paused).
   if(s.g.isPause() || (OgHooks::video!=nullptr && OgHooks::video->isActive()))
@@ -588,10 +693,10 @@ int update(char* out, size_t cap) {
 
   switch(act.kind) {
     case Kind::Wait:
-      return now>=act.until ? finish() : OG_ACTION_RUNNING;
+      return now>=act.until ? finish(&pl) : OG_ACTION_RUNNING;
 
     case Kind::Step:
-      return now>=act.until ? finish() : OG_ACTION_RUNNING;
+      return now>=act.until ? finish(&pl) : OG_ACTION_RUNNING;
 
     case Kind::Turn:
       return tickTurn(w,pl,out,cap);
@@ -616,7 +721,7 @@ int update(char* out, size_t cap) {
         act.phase = 2;
         }
       if(!air)
-        return finish();
+        return finish(&pl);
       if(now>act.start+JUMP_TIMEOUT)
         return fail(out,cap,&pl,"still in the air after the jump");
       return OG_ACTION_RUNNING;
@@ -640,7 +745,7 @@ int update(char* out, size_t cap) {
                                   " from the position; use step for the rest");
         return fail(out,cap,&pl,"stopped "+meters(d)+" from the target (no path, or blocked)");
         }
-      return finish();
+      return finish(&pl);
       }
 
     case Kind::PickUp: {
@@ -660,7 +765,7 @@ int update(char* out, size_t cap) {
         }
       // Right after walking the body state may not be "standing" yet: retry briefly.
       if(OgHooks::playerControl!=nullptr && OgHooks::playerControl->interact(*it))
-        return finish();
+        return finish(&pl);
       if(now>act.until)
         return fail(out,cap,&pl,"could not pick up the item (busy, or weapon drawn)");
       return OG_ACTION_RUNNING;
@@ -684,7 +789,7 @@ int update(char* out, size_t cap) {
         return OG_ACTION_RUNNING;
         }
       if(OgHooks::dialogMenu!=nullptr && OgHooks::dialogMenu->ogView().partner==n)
-        return finish();
+        return finish(&pl);
       if(now>act.until)
         return fail(out,cap,&pl,"the NPC did not start a conversation");
       return OG_ACTION_RUNNING;
@@ -708,7 +813,7 @@ int update(char* out, size_t cap) {
         if(!pl.useItem(act.cls,Item::NSLOT,false))
           return fail(out,cap,&pl,"the game refused to use the item (weapon drawn, or busy)");
         if(instant)
-          return finish();
+          return finish(&pl);
         act.phase = 1;
         act.until = now+USE_START;
         }
@@ -723,9 +828,115 @@ int update(char* out, size_t cap) {
         return OG_ACTION_RUNNING;
         }
       if(act.seenUse || pl.itemCount(act.cls)!=act.count)
-        return finish();
+        return finish(&pl);
       if(now>act.until)
         return fail(out,cap,&pl,"the game did not use the item (busy, or it can't be used now)");
+      return OG_ACTION_RUNNING;
+      }
+
+    case Kind::Attack: {
+      Npc* n = ogIds().findNpc(w,act.id);
+      if(n==nullptr)
+        return fail(out,cap,&pl,"the NPC is no longer in the world");
+      if(n->isDown() && act.phase<2) {
+        if(act.phase<1)
+          return finish(&pl);
+        // The fight is over: hand the player back, then put the weapon away.
+        endFight(&pl);
+        pl.clearAiQueue();
+        act.usesAi = false;
+        act.phase  = 2;
+        act.until  = now+DRAW_TIMEOUT;
+        return OG_ACTION_RUNNING;
+        }
+      if(pl.isDown())
+        return fail(out,cap,&pl,"the hero was knocked down");
+      if(act.phase==-1) {
+        const float d = dist(pl,n->position());
+        if(d<=ATTACK_NEAR && !pl.isAiQueueEmpty())
+          pl.clearAiQueue();
+        if(!pl.isAiQueueEmpty())
+          return OG_ACTION_RUNNING;
+        if(d>ATTACK_NEAR*2)
+          return fail(out,cap,&pl,"could not get close to the NPC ("+meters(d)+" away)");
+        act.usesAi = false;
+        act.phase  = 0;
+        act.until  = now+DRAW_TIMEOUT;
+        }
+      if(act.phase==0) {
+        const auto ws = pl.weaponState();
+        if(ws!=WeaponState::Fist && ws!=WeaponState::W1H && ws!=WeaponState::W2H) {
+          if(now>act.until)
+            return fail(out,cap,&pl,"could not draw a weapon (busy)");
+          if(pl.currentMeleeWeapon()!=nullptr)
+            pl.drawWeaponMelee(); else
+            pl.drawWeaponFist();
+          return OG_ACTION_RUNNING;
+          }
+        std::string why;
+        if(!startFight(w,true,why))
+          return fail(out,cap,&pl,why);
+        act.usesAi = true;
+        act.phase  = 1;
+        }
+      if(act.phase==2) {
+        if(pl.weaponState()==WeaponState::NoWeapon)
+          return finish(&pl);
+        if(now>act.until) {
+          Tempest::Log::i("og_control: attack: the NPC is down, but the weapon is still out after 3 s");
+          return finish(&pl);
+          }
+        pl.closeWeapon(false);
+        return OG_ACTION_RUNNING;
+        }
+      if(now>=act.logged+2000) {
+        act.logged = now;
+        Tempest::Log::i("og_control: attack: target ",meters(dist(pl,n->position()))," away, its hp ",
+                        n->attribute(ATR_HITPOINTS),", hero body state ",int(pl.bodyStateMasked()),
+                        ", fight moves ",pl.ogHasFightMoves() ? "yes" : "no",
+                        ", queue ",pl.isAiQueueEmpty() ? "empty" : "busy");
+        }
+      // PlayerControl::tickFocus retargets the player to whatever is in focus.
+      pl.setTarget(n);
+      if(pl.isAiQueueEmpty()) {
+        act.queued = 0;
+        if(!pl.ogHasFightMoves()) {
+          pl.aiPush(AiQueue::aiAttack());
+          act.queued = now;
+          }
+        }
+      else if(act.queued!=0 && now>act.queued+FIGHT_STUCK) {
+        return fail(out,cap,&pl,"the fight AI found no move for the hero");
+        }
+      return OG_ACTION_RUNNING;
+      }
+
+    case Kind::Flee: {
+      Npc* n = ogIds().findNpc(w,act.id);
+      if(n==nullptr || n->isDown())
+        return finish(&pl);
+      const float d = dist(pl,n->position());
+      if(d>=FLEE_SAFE)
+        return finish(&pl);
+      if(pl.isDown())
+        return fail(out,cap,&pl,"the hero was knocked down");
+      if(now>act.until)
+        return fail(out,cap,&pl,"still "+meters(d)+" from the attacker after 30 s (cornered?)");
+      if(act.phase==0) {
+        std::string why;
+        if(!startFight(w,false,why))
+          return fail(out,cap,&pl,why);
+        act.usesAi = true;
+        act.phase  = 1;
+        }
+      pl.setTarget(n);
+      // Each AI_Flee picks the waypoint farthest from the attacker and turns there, then
+      // the run (GT_Flee) goes on; repeated, the heading follows an attacker who gives
+      // chase. Not "queue empty": the run itself keeps isAiQueueEmpty() false.
+      if(act.queued==0 || now>=act.queued+1000) {
+        pl.aiPush(AiQueue::aiFlee());
+        act.queued = now;
+        }
       return OG_ACTION_RUNNING;
       }
 

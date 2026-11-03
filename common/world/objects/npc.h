@@ -404,6 +404,10 @@ class Npc final {
     uint32_t  ogHitCount()          const { return ogHits; }
     const Npc* ogLastHit()          const { return lastHit; }
     uint64_t  ogLastHitGeneration() const { return ogHitGeneration; }
+    // opengothic-rs: the seam's attack queues the next AI_Attack only when the fight AI
+    // ran out of moves (as ZS_Attack's loop does); a queued action stops implAttack.
+    bool      ogHasFightMoves() const { return fghAlgo.hasInstructions(); }
+    void      ogClearFightMoves()     { fghAlgo.onClearTarget(); }
 
     void      setOther(Npc* ot);
     void      setVictim(Npc* ot);

@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-#define OG_CAPI_VERSION 9
+#define OG_CAPI_VERSION 10
 
 /* Per-frame context; only valid inside the callback that received it. */
 typedef struct og_ctx og_ctx;
@@ -256,6 +256,8 @@ int og_skip_videos(og_ctx* ctx);
 #define OG_CMD_USE_ITEM     10  /* v9 */
 #define OG_CMD_EQUIP        11  /* v9 */
 #define OG_CMD_UNEQUIP      12  /* v9 */
+#define OG_CMD_ATTACK       13  /* v10 */
+#define OG_CMD_FLEE         14  /* v10 */
 
 #define OG_TARGET_WAYPOINT 1  /* name */
 #define OG_TARGET_NPC      2  /* id */
@@ -284,7 +286,10 @@ typedef struct og_target {
  * inventory (og_inventory_item_state.instance, any case). USE_ITEM is for items that are
  * not equipment (potions, food, plants, torches; documents are refused); it ends when the
  * use animation does. EQUIP (weapons, armour, shields, rings, amulets, belts, runes and scrolls) and
- * UNEQUIP finish at once. */
+ * UNEQUIP finish at once.
+ * ATTACK: target.id (an NPC); the NPC fight AI drives the player (melee weapon, else
+ * fists) until the NPC is down; the weapon is put away when the action ends.
+ * FLEE: nothing; runs from the nearest NPC that is fighting the player until 15 m away. */
 typedef struct og_command {
   int32_t   kind;  /* OG_CMD_* */
   og_target target;

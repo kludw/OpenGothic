@@ -1557,7 +1557,8 @@ bool Npc::implGoTo(uint64_t dt, float destDist) {
   }
 
 bool Npc::implAttack(uint64_t dt) {
-  if(currentTarget==nullptr || isPlayer() || isTalk())
+  // opengothic-rs: the seam's attack lets the fight AI drive the player too.
+  if(currentTarget==nullptr || (isPlayer() && !OgHooks::hostFightsForPlayer) || isTalk())
     return false;
 
   if(currentTarget->isDown()){
@@ -2383,7 +2384,7 @@ void Npc::tick(uint64_t dt) {
     }
 
   if(waitTime>=owner.tickCount() || aniWaitTime>=owner.tickCount() || outWaitTime>owner.tickCount()) {
-    if(!isPlayer() && go2.flag!=GT_Flee && faiWaitTime<owner.tickCount() && currentTarget!=nullptr) {
+    if((!isPlayer() || OgHooks::hostFightsForPlayer) && go2.flag!=GT_Flee && faiWaitTime<owner.tickCount() && currentTarget!=nullptr) {
       implTurnToFai(*currentTarget,dt);
       }
     mvAlgo.tick(dt,MoveAlgo::WaitMove);

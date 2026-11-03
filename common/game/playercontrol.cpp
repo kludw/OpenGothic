@@ -9,6 +9,7 @@
 #include "ui/dialogmenu.h"
 #include "ui/inventorymenu.h"
 #include "gothic.h"
+#include "capi/oghooks.h"
 
 PlayerControl::PlayerControl(DialogMenu& dlg, InventoryMenu &inv)
   :dlg(dlg),inv(inv) {
@@ -619,6 +620,12 @@ void PlayerControl::implMove(uint64_t dt) {
     return;
   if(bs==BS_UNCONSCIOUS)
     return;
+
+  // opengothic-rs: the seam's attack/flee drive the player through the fight AI.
+  if(OgHooks::hostDrivesPlayer) {
+    runAngleDest = 0;
+    return;
+    }
 
   if(!pl.isAiQueueEmpty()) {
     runAngleDest = 0;

@@ -7,6 +7,7 @@
 #include "world/objects/item.h"
 #include "gothic.h"
 #include "serialize.h"
+#include "capi/oghooks.h"
 
 // According to Gothic1 scripts:
 // W  - Weapon Range (FIGHT_RANGE_FIST * 3)
@@ -31,7 +32,12 @@ void FightAlgo::save(Serialize &fout) {
   }
 
 void FightAlgo::fillQueue(Npc &npc, Npc &tg, GameScript& owner) {
-  auto& ai = Gothic::fai()[size_t(npc.handle().fight_tactic)];
+  // opengothic-rs: the seam's attack lends the hero a tactic (heroes have none) without
+  // touching the script instance, which saves would keep.
+  auto tactic = npc.handle().fight_tactic;
+  if(tactic==0 && npc.isPlayer() && OgHooks::hostFightsForPlayer)
+    tactic = OgHooks::playerFightTactic;
+  auto& ai = Gothic::fai()[size_t(tactic)];
   auto  ws = npc.weaponState();
 
   if(hitFlg) {
