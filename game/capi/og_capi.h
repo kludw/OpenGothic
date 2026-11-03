@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-#define OG_CAPI_VERSION 12
+#define OG_CAPI_VERSION 13
 
 /* Per-frame context; only valid inside the callback that received it. */
 typedef struct og_ctx og_ctx;
@@ -290,6 +290,8 @@ int og_dev_console(og_ctx* ctx, og_str command);
 #define OG_CMD_FLEE         14  /* v10 */
 #define OG_CMD_TRADE        15  /* v11 */
 #define OG_CMD_SLEEP        16  /* v12 */
+#define OG_CMD_READ         17  /* v13 */
+#define OG_CMD_CLOSE_DOCUMENT 18  /* v13 */
 
 /* og_command.trade_op (v11). */
 #define OG_TRADE_OPEN 0
@@ -321,7 +323,7 @@ typedef struct og_target {
  * (clockwise seen from above, heading_deg decreases).  JUMP: nothing.
  * USE_ITEM, EQUIP, UNEQUIP: instance, the script instance name of an item in the player's
  * inventory (og_inventory_item_state.instance, any case). USE_ITEM is for items that are
- * not equipment (potions, food, plants, torches; documents are refused); it ends when the
+ * not equipment (potions, food, plants, torches; documents are refused: use READ); it ends when the
  * use animation does. EQUIP (weapons, armour, shields, rings, amulets, belts, runes and scrolls) and
  * UNEQUIP finish at once.
  * ATTACK: target.id (an NPC); the NPC fight AI drives the player (melee weapon, else
@@ -335,7 +337,15 @@ typedef struct og_target {
  * SLEEP (v12): hour (0..23). The player lies down in the nearest free bed within 10 m,
  * waits for the bed's sleep dialog, runs the scripts' PC_SLEEP(hour) (what that dialog's
  * options call: sets the clock to the next such hour, restores health and mana, ends the
- * dialog) and gets up; finishes once the player stands again. */
+ * dialog) and gets up; finishes once the player stands again.
+ * READ (v13): instance, a document item in the player's inventory (map, letter, book), or
+ * empty for the player's map of the current world (a carried ITWR_MAP_* item:
+ * ITWR_MAP_<WORLD> first, then one whose name contains the world's name, then any). The
+ * player uses it as a human would; the action finishes once the game's document window
+ * has been drawn (og_capture_frame then shows it), with the window still open. A failed
+ * or cancelled READ closes it.
+ * CLOSE_DOCUMENT (v13): nothing; closes the open document window (as Esc does), finishes
+ * at once; refused when none is open. */
 typedef struct og_command {
   int32_t   kind;  /* OG_CMD_* */
   og_target target;

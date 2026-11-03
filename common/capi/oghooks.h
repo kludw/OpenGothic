@@ -3,6 +3,7 @@
 #include <cstdint>
 
 class DialogMenu;
+class DocumentMenu;
 class InventoryMenu;
 class MainWindow;
 class PlayerControl;
@@ -15,6 +16,7 @@ namespace OgHooks {
   extern void (*onFrame)();
   // The main window's widgets while the window exists (main thread only).
   extern DialogMenu*    dialogMenu;
+  extern DocumentMenu*  documentMenu;
   extern InventoryMenu* inventoryMenu;
   extern PlayerControl* playerControl;
   extern VideoWidget*   video;

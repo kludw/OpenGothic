@@ -1232,7 +1232,12 @@ void Gothic::doc_setlevel(int handle, std::string_view level) {
     i = char(std::tolower(i));
 
   if(auto w = world()) {
-    doc->showPlayer = (w->name()==str);
+    // opengothic-rs (UB-27): the world's name keeps the case it was given (-w, a mod's
+    // ini), while str is lower-cased; compare without case.
+    std::string wn(w->name());
+    for(auto& i:wn)
+      i = char(std::tolower(static_cast<unsigned char>(i)));
+    doc->showPlayer = (wn==str);
     }
   }
 

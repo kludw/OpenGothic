@@ -23,6 +23,7 @@
 #include "game/inventory.h"
 #include "game/playercontrol.h"
 #include "ui/dialogmenu.h"
+#include "ui/documentmenu.h"
 #include "ui/inventorymenu.h"
 #include "ui/videowidget.h"
 #include "utils/keycodec.h"
@@ -66,6 +67,11 @@ constexpr uint64_t TRADE_OPEN_TIMEOUT = 30000;
 // sleep: walking to the bed and lying down until its sleep dialog shows, then getting up.
 constexpr uint64_t SLEEP_LIE_TIMEOUT   = 30000;
 constexpr uint64_t SLEEP_GETUP_TIMEOUT = 15000;
+// read: frames the document window must have been open before the action finishes, so
+// the UI og_capture_frame draws (the last frame's) has it.
+constexpr int      READ_FRAMES  = 3;
+// read: time to be standing (a pick-up's animation can still play, seen > 1 s).
+constexpr uint64_t READ_START   = 3000;
 // Bed schemes (the visual's name up to its first '_'); scripts use these three.
 constexpr std::string_view BED_SCHEMES[] = {"BEDHIGH","BEDLOW","BED"};
 // Farther than this, attack walks the waynet first: the fight AI's own pathing went back
@@ -75,7 +81,7 @@ constexpr float    TURN_DONE    = 2.f;  // degrees
 // Upper bound for wait: keeps the seconds->ms conversion defined (og_capi.h).
 constexpr float    WAIT_MAX_S   = 86400.f;
 
-enum class Kind : uint8_t { None, GoTo, Turn, TalkTo, Wait, PickUp, Step, Jump, UseItem, Attack, Flee, Trade, Sleep, Done };
+enum class Kind : uint8_t { None, GoTo, Turn, TalkTo, Wait, PickUp, Step, Jump, UseItem, Attack, Flee, Trade, Sleep, Read, Done };
 
 struct Action {
   Kind             kind  = Kind::None;
@@ -111,6 +117,8 @@ struct Action {
   std::string      mob;
   int32_t          mobState = 0;
   int32_t          hour     = 0;
+  // read: update() calls that saw the document window open.
+  int              docFrames = 0;
   };
 
 Action act;
@@ -194,6 +202,17 @@ void sheathe(Npc* pl) {
 bool inDialog();
 bool endBedDialog(World& w, Npc& pl);
 
+bool documentOpen() {
+  return OgHooks::documentMenu!=nullptr && OgHooks::documentMenu->isActive();
+  }
+
+void closeDocument() {
+  if(!documentOpen())
+    return;
+  OgHooks::documentMenu->close();
+  Tempest::Log::i("og_control: closed the document window");
+  }
+
 // Ends the current action without reporting it. pl: the player of the action's world,
 // or nullptr if that world is gone.
 void cancel(Npc* pl) {
@@ -212,6 +231,9 @@ void cancel(Npc* pl) {
       Tempest::Log::i("og_control: the bed's dialog stays open; choose its END option");
     pl->aiPush(AiQueue::aiUseMob(act.mob,-1));
     }
+  // A read that didn't finish must not leave the window over the game.
+  if(act.kind==Kind::Read)
+    closeDocument();
   act = Action{};
   }
 
@@ -520,6 +542,36 @@ Item* heldItem(World& w, Npc& pl, const og_str& s, size_t& cls, std::string& nam
   return it;
   }
 
+// The player's map of world w (READ with no instance), see og_capi.h; nullptr + why if none.
+const Item* worldMap(World& w, Npc& pl, size_t& cls, std::string& name, std::string& why) {
+  std::string stem(w.name());
+  stem = stem.substr(0,stem.find('.'));
+  for(auto& c:stem)
+    c = char(std::toupper(static_cast<unsigned char>(c)));
+  const std::string exact = "ITWR_MAP_"+stem;
+  const Item* best = nullptr;
+  int         rank = 0;
+  for(auto i=pl.inventory().iterator(Inventory::T_Inventory); i.isValid(); ++i) {
+    const Item& it = *i;
+    auto* sym = w.script().findSymbol(it.clsId());
+    if(sym==nullptr || (uint32_t(it.handle().main_flag) & ITM_CAT_DOCS)==0)
+      continue;
+    const std::string n(sym->name());
+    if(n.rfind("ITWR_MAP_",0)!=0)
+      continue;
+    const int r = n==exact ? 3 : (!stem.empty() && n.find(stem)!=std::string::npos) ? 2 : 1;
+    if(r>rank) {
+      best = &it;
+      rank = r;
+      name = n;
+      cls  = it.clsId();
+      }
+    }
+  if(best==nullptr)
+    why = "the hero carries no map (no ITWR_MAP_* item); maps are bought or found";
+  return best;
+  }
+
 KeyCodec::Action stepKey(int32_t dir) {
   switch(dir) {
     case OG_STEP_FORWARD:  return KeyCodec::Forward;
@@ -544,6 +596,17 @@ int submit(const og_command& cmd, char* out, size_t cap) {
     }
   World& w  = *s.w;
   Npc&   pl = *s.pl;
+
+  if(cmd.kind==OG_CMD_CLOSE_DOCUMENT) {
+    if(!documentOpen())
+      return reject(out,cap,"no document is open");
+    cancel(&pl);
+    closeDocument();
+    act            = Action{};
+    act.generation = OgHooks::worldGeneration;
+    act.kind       = Kind::Done;
+    return OG_CTL_OK;
+    }
 
   if(pl.isDead())
     return reject(out,cap,"the player is dead");
@@ -749,10 +812,25 @@ int submit(const og_command& cmd, char* out, size_t cap) {
         return reject(out,cap,"'"+name+"' is equipment; use equip");
       // A document's script opens DocumentMenu, which only a key closes: no command could.
       if((uint32_t(it->handle().main_flag) & ITM_CAT_DOCS)!=0)
-        return reject(out,cap,"reading documents and maps is not supported yet");
+        return reject(out,cap,"'"+name+"' is a document; read it with READ");
       a.kind  = Kind::UseItem;
       a.count = pl.itemCount(a.cls);
       a.until = a.start+USE_START;
+      break;
+      }
+    case OG_CMD_READ: {
+      if(documentOpen())
+        return reject(out,cap,"a document is already open; close it first");
+      std::string name;
+      const Item* it = (cmd.instance.len==0) ? worldMap(w,pl,a.cls,name,why)
+                                       : heldItem(w,pl,cmd.instance,a.cls,name,why);
+      if(it==nullptr)
+        return reject(out,cap,why);
+      if((uint32_t(it->handle().main_flag) & ITM_CAT_DOCS)==0)
+        return reject(out,cap,"'"+name+"' is not a document (map, letter or book)");
+      a.kind  = Kind::Read;
+      a.until = a.start+READ_START;
+      Tempest::Log::i("og_submit: read ",name);
       break;
       }
     case OG_CMD_EQUIP:
@@ -1134,6 +1212,35 @@ int update(char* out, size_t cap) {
         return finish(&pl);
       if(now>act.until)
         return fail(out,cap,&pl,"the game did not use the item (busy, or it can't be used now)");
+      return OG_ACTION_RUNNING;
+      }
+
+    case Kind::Read: {
+      // As use_item: use once standing; the item's script opens the document window.
+      if(act.phase==0) {
+        if(pl.bodyStateMasked()!=BS_STAND) {
+          if(now>act.until)
+            return fail(out,cap,&pl,"could not read (weapon drawn, swimming, or busy; body state "+
+                        std::to_string(pl.bodyStateMasked())+")");
+          return OG_ACTION_RUNNING;
+          }
+        if(pl.getItem(act.cls)==nullptr)
+          return fail(out,cap,&pl,"the document is no longer in the inventory");
+        if(!pl.useItem(act.cls,Item::NSLOT,false))
+          return fail(out,cap,&pl,"the game refused to use the document (weapon drawn, or busy)");
+        act.phase = 1;
+        act.until = now+USE_TIMEOUT;
+        }
+      if(documentOpen()) {
+        // finish() leaves the window open for the host's capture; only cancel() closes it.
+        if(++act.docFrames>=READ_FRAMES)
+          return finish(&pl);
+        return OG_ACTION_RUNNING;
+        }
+      if(act.docFrames>0)
+        return fail(out,cap,&pl,"the document window closed again");
+      if(now>act.until)
+        return fail(out,cap,&pl,"the document opened no window");
       return OG_ACTION_RUNNING;
       }
 

@@ -117,6 +117,7 @@ MainWindow::MainWindow(Device& device)
 
 MainWindow::~MainWindow() {
   OgHooks::dialogMenu    = nullptr;
+  OgHooks::documentMenu  = nullptr;
   OgHooks::inventoryMenu = nullptr;
   OgHooks::playerControl = nullptr;
   OgHooks::video         = nullptr;
@@ -159,6 +160,7 @@ void MainWindow::setupUi() {
   Gothic::inst().onDialogPipe  .bind(&dialogs,&DialogMenu::openPipe);
   Gothic::inst().isNpcInDialogFn = std::bind(&DialogMenu::isNpcInDialog, &dialogs, std::placeholders::_1);
   OgHooks::dialogMenu    = &dialogs;
+  OgHooks::documentMenu  = &document;
   OgHooks::inventoryMenu = &inventory;
   OgHooks::playerControl = &player;
   OgHooks::video         = &video;

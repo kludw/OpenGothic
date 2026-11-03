@@ -2,6 +2,7 @@
 
 void (*OgHooks::onFrame)() = nullptr;
 DialogMenu*    OgHooks::dialogMenu    = nullptr;
+DocumentMenu*  OgHooks::documentMenu  = nullptr;
 InventoryMenu* OgHooks::inventoryMenu = nullptr;
 PlayerControl* OgHooks::playerControl = nullptr;
 VideoWidget*   OgHooks::video         = nullptr;
