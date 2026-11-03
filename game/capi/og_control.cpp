@@ -20,8 +20,10 @@
 #include "og_ids.h"
 #include "game/constants.h"
 #include "game/gamescript.h"
+#include "game/inventory.h"
 #include "game/playercontrol.h"
 #include "ui/dialogmenu.h"
+#include "ui/inventorymenu.h"
 #include "ui/videowidget.h"
 #include "utils/keycodec.h"
 #include "world/aiqueue.h"
@@ -30,6 +32,7 @@
 #include "world/waypoint.h"
 #include "world/world.h"
 #include "gothic.h"
+#include "marvin.h"
 
 namespace {
 
@@ -57,6 +60,8 @@ constexpr uint64_t DRAW_TIMEOUT = 3000;
 constexpr uint64_t FIGHT_STUCK  = 5000;
 constexpr uint64_t FLEE_TIMEOUT = 30000;
 constexpr float    FLEE_SAFE    = 1500;
+// The trade option's lines are spoken before the trade screen opens.
+constexpr uint64_t TRADE_OPEN_TIMEOUT = 30000;
 // Farther than this, attack walks the waynet first: the fight AI's own pathing went back
 // and forth at ~20 m from a field raider by Xardas' tower for minutes.
 constexpr float    ATTACK_NEAR  = 500;
@@ -64,7 +69,7 @@ constexpr float    TURN_DONE    = 2.f;  // degrees
 // Upper bound for wait: keeps the seconds->ms conversion defined (og_capi.h).
 constexpr float    WAIT_MAX_S   = 86400.f;
 
-enum class Kind : uint8_t { None, GoTo, Turn, TalkTo, Wait, PickUp, Step, Jump, UseItem, Attack, Flee, Done };
+enum class Kind : uint8_t { None, GoTo, Turn, TalkTo, Wait, PickUp, Step, Jump, UseItem, Attack, Flee, Trade, Done };
 
 struct Action {
   Kind             kind  = Kind::None;
@@ -92,6 +97,10 @@ struct Action {
   bool             fight   = false;
   uint64_t         queued  = 0;
   uint64_t         logged  = 0;
+  // trade: OG_TRADE_*, upper-case item instance name and pieces (BUY/SELL).
+  int32_t          tradeOp = OG_TRADE_OPEN;
+  std::string      ware;
+  uint32_t         amount  = 0;
   };
 
 Action act;
@@ -235,6 +244,83 @@ Current current() {
 
 bool inDialog() {
   return OgHooks::dialogMenu!=nullptr && OgHooks::dialogMenu->ogView().partner!=nullptr;
+  }
+
+// The trade partner while the trade screen is open, else nullptr.
+Npc* trader() {
+  return OgHooks::inventoryMenu==nullptr ? nullptr : OgHooks::inventoryMenu->ogTrader();
+  }
+
+void closeTrade() {
+  if(trader()==nullptr)
+    return;
+  OgHooks::inventoryMenu->close();
+  Tempest::Log::i("og_control: closed the trade screen");
+  }
+
+// Pieces of cls the trader's page of the trade screen offers: not equipped, not gold
+// (Inventory::T_Trade, InventoryMenu's TradePage). The hero's page lists the whole
+// inventory (Npc::sellItem unequips what it sells).
+size_t tradeable(const Inventory& inv, size_t cls) {
+  size_t n = 0;
+  for(auto i=inv.iterator(Inventory::T_Trade); i.isValid(); ++i)
+    if((*i).clsId()==cls)
+      n += i.count();
+  return n;
+  }
+
+// Runs the action's BUY/SELL on the open trade screen with tr, all or nothing.
+// Returns "" when done, else why not (nothing changed then).
+std::string deal(World& w, Npc& pl, Npc& tr, const Action& a) {
+  const std::string& name = a.ware;
+  const size_t cls  = w.script().findSymbolIndex(name);
+  const auto*  gold = w.script().goldId();
+  if(cls==size_t(-1))
+    return "unknown item '"+name+"'";
+  if(gold!=nullptr && cls==gold->index())
+    return "gold is what you pay with; it is not traded";
+  const std::string who(tr.displayName());
+  const size_t   goldBefore = pl.inventory().goldCount();
+  const uint64_t n          = a.amount;
+  if(a.tradeOp==OG_TRADE_SELL) {
+    const size_t have = pl.inventory().itemCount(cls);
+    if(have==0)
+      return "no '"+name+"' in the inventory";
+    if(have<n)
+      return "the hero has only "+std::to_string(have)+" '"+name+"' to sell";
+    const int64_t price  = pl.inventory().sellPriceOf(cls);
+    // Npc::sellItem adds size_t(price)*n gold: a negative price would wrap.
+    if(price<0)
+      return "'"+name+"' has a negative value ("+std::to_string(price)+"); not sold";
+    const size_t  before = pl.inventory().itemCount(cls);
+    pl.sellItem(cls,tr,size_t(n));
+    const int64_t got = int64_t(pl.inventory().goldCount())-int64_t(goldBefore);
+    if(pl.inventory().itemCount(cls)+n!=before || got!=price*int64_t(n)) {
+      Tempest::Log::e("og_control: sale of ",n," ",name," went wrong: price ",price,", gold +",got);
+      return "the game did not complete the sale";
+      }
+    Tempest::Log::i("og_control: sold ",n," ",name," to ",who," for ",got," gold");
+    return "";
+    }
+  const size_t have = tradeable(tr.inventory(),cls);
+  if(have==0)
+    return who+" does not sell '"+name+"'";
+  if(have<n)
+    return who+" has only "+std::to_string(have)+" '"+name+"'";
+  const int64_t price = tr.inventory().priceOf(cls);
+  const int64_t cost  = price*int64_t(n);
+  if(cost>int64_t(goldBefore))
+    return std::to_string(n)+" '"+name+"' cost "+std::to_string(cost)+" gold ("+std::to_string(price)+
+           " each); the hero has "+std::to_string(goldBefore);
+  const size_t before = pl.inventory().itemCount(cls);
+  pl.buyItem(cls,tr,size_t(n));
+  const int64_t paid = int64_t(goldBefore)-int64_t(pl.inventory().goldCount());
+  if(pl.inventory().itemCount(cls)!=before+n || paid!=cost) {
+    Tempest::Log::e("og_control: purchase of ",n," ",name," went wrong: cost ",cost,", paid ",paid);
+    return "the game did not complete the purchase";
+    }
+  Tempest::Log::i("og_control: bought ",n," ",name," from ",who," for ",paid," gold");
+  return "";
   }
 
 // Where a target currently is; false (with reason) if it is gone.
@@ -423,8 +509,8 @@ int submit(const og_command& cmd, char* out, size_t cap) {
     return reject(out,cap,"the player is dead");
 
   const bool dialog = inDialog();
-  if(dialog && cmd.kind!=OG_CMD_CHOOSE_DIALOG && cmd.kind!=OG_CMD_WAIT)
-    return reject(out,cap,"in a dialog: only choose_dialog and wait are possible");
+  if(dialog && cmd.kind!=OG_CMD_CHOOSE_DIALOG && cmd.kind!=OG_CMD_WAIT && cmd.kind!=OG_CMD_TRADE)
+    return reject(out,cap,"in a dialog: only choose_dialog, trade and wait are possible");
   // Scripts (cutscenes, dialogs) also use the player's AI queue; never fight them.
   const bool ownAi = act.kind!=Kind::None && act.usesAi;
   if(!dialog && !ownAi && !pl.isAiQueueEmpty() && cmd.kind!=OG_CMD_WAIT)
@@ -477,6 +563,9 @@ int submit(const og_command& cmd, char* out, size_t cap) {
         return reject(out,cap,"no dialog options are shown right now; wait for them");
       if(cmd.index>=v.choices->size() || (*v.choices)[cmd.index].title.empty())
         return reject(out,cap,"no dialog option with index "+std::to_string(cmd.index));
+      // While the trade screen is open the menu waits behind it (isChoiceMenuActive):
+      // close it only once the choice is known to be valid.
+      closeTrade();
       cancel(&pl);
       if(!OgHooks::dialogMenu->ogChoose(cmd.index))
         return reject(out,cap,"the dialog did not accept the choice");
@@ -528,6 +617,64 @@ int submit(const og_command& cmd, char* out, size_t cap) {
       a.id     = ogIds().npc(*from);
       a.until  = a.start+FLEE_TIMEOUT;
       break;
+      }
+    case OG_CMD_TRADE: {
+      og_target t = cmd.target;
+      t.kind = OG_TARGET_NPC;
+      if(!resolveTarget(w,pl,t,a,why))
+        return reject(out,cap,why);
+      Npc* n = ogIds().findNpc(w,a.id);
+      const std::string who(n->displayName());
+      if(cmd.trade_op!=OG_TRADE_OPEN && cmd.trade_op!=OG_TRADE_BUY && cmd.trade_op!=OG_TRADE_SELL)
+        return reject(out,cap,"unknown trade operation "+std::to_string(cmd.trade_op));
+      a.tradeOp = cmd.trade_op;
+      if(a.tradeOp!=OG_TRADE_OPEN) {
+        if(cmd.amount==0)
+          return reject(out,cap,"amount must be at least 1");
+        if(cmd.instance.len>0 && cmd.instance.ptr==nullptr)
+          return reject(out,cap,"bad item instance name");
+        a.ware.assign(cmd.instance.ptr==nullptr ? "" : cmd.instance.ptr,cmd.instance.len);
+        for(auto& c:a.ware)
+          c = char(std::toupper(static_cast<unsigned char>(c)));
+        if(a.ware.empty())
+          return reject(out,cap,"no item instance name given");
+        a.amount = cmd.amount;
+        }
+      a.kind = Kind::Trade;
+      if(Npc* tr = trader(); tr!=nullptr) {
+        if(tr!=n)
+          return reject(out,cap,"trading with "+std::string(tr->displayName())+", not "+who);
+        if(a.tradeOp!=OG_TRADE_OPEN) {
+          const std::string no = deal(w,pl,*n,a);
+          if(!no.empty())
+            return reject(out,cap,no);
+          }
+        // Only wait can be running in a dialog; the deal doesn't affect it.
+        cancel(&pl);
+        act      = a;
+        act.kind = Kind::Done;
+        return OG_CTL_OK;
+        }
+      const DialogMenu::OgView v = OgHooks::dialogMenu==nullptr ? DialogMenu::OgView{} : OgHooks::dialogMenu->ogView();
+      if(v.partner!=n)
+        return reject(out,cap,"not talking with "+who+"; talk_to them first, trading starts from their trade option");
+      if(v.choices==nullptr)
+        return reject(out,cap,"no dialog options are shown right now; wait for them");
+      size_t opt = v.choices->size();
+      for(size_t i=0; i<v.choices->size(); ++i)
+        if((*v.choices)[i].isTrade && !(*v.choices)[i].title.empty()) {
+          opt = i;
+          break;
+          }
+      if(opt==v.choices->size())
+        return reject(out,cap,who+" offers no trade option right now");
+      cancel(&pl);
+      if(!OgHooks::dialogMenu->ogChoose(opt))
+        return reject(out,cap,"the dialog did not accept the trade option");
+      act       = a;
+      act.until = a.start+TRADE_OPEN_TIMEOUT;
+      Tempest::Log::i("og_submit: chose trade option ",opt," of ",who);
+      return OG_CTL_OK;
       }
     case OG_CMD_USE_ITEM: {
       std::string name;
@@ -782,10 +929,19 @@ int update(char* out, size_t cap) {
         if(d>ARRIVE_NPC)
           return fail(out,cap,&pl,"could not get close to the NPC ("+meters(d)+" away)");
         act.usesAi = false;
-        if(OgHooks::playerControl==nullptr || !OgHooks::playerControl->interact(*n))
+        act.phase  = 2;
+        act.until  = now+TAKE_TIMEOUT;
+        }
+      if(act.phase==2) {
+        // Right after walking or a step the body state may not be "standing" yet
+        // (PlayerControl::interact refuses then): retry briefly, as pick_up does.
+        if(OgHooks::playerControl!=nullptr && OgHooks::playerControl->interact(*n)) {
+          act.phase = 1;
+          act.until = now+TALK_TIMEOUT;
+          return OG_ACTION_RUNNING;
+          }
+        if(now>act.until)
           return fail(out,cap,&pl,"can't talk right now (busy, or weapon drawn)");
-        act.phase = 1;
-        act.until = now+TALK_TIMEOUT;
         return OG_ACTION_RUNNING;
         }
       if(OgHooks::dialogMenu!=nullptr && OgHooks::dialogMenu->ogView().partner==n)
@@ -793,6 +949,28 @@ int update(char* out, size_t cap) {
       if(now>act.until)
         return fail(out,cap,&pl,"the NPC did not start a conversation");
       return OG_ACTION_RUNNING;
+      }
+
+    case Kind::Trade: {
+      Npc* n = ogIds().findNpc(w,act.id);
+      if(n==nullptr)
+        return fail(out,cap,&pl,"the trader is no longer in the world");
+      Npc* tr = trader();
+      if(tr==nullptr) {
+        if(!inDialog())
+          return fail(out,cap,&pl,"the dialog ended before the trade screen opened");
+        if(now>act.until)
+          return fail(out,cap,&pl,"the trade screen did not open");
+        return OG_ACTION_RUNNING;
+        }
+      if(tr!=n)
+        return fail(out,cap,&pl,"the trade screen opened with someone else");
+      if(act.tradeOp!=OG_TRADE_OPEN) {
+        const std::string no = deal(w,pl,*n,act);
+        if(!no.empty())
+          return fail(out,cap,&pl,no);
+        }
+      return finish(&pl);
       }
 
     case Kind::UseItem: {
@@ -990,6 +1168,27 @@ int og_skip_videos(og_ctx* ctx) {
     Tempest::Log::i("og_skip_videos: skipping video");
     OgHooks::video->ogStopAll();
     return 1;
+    });
+  }
+
+int og_dev_console(og_ctx* ctx, og_str command) {
+  return guarded("og_dev_console",ctx,[&]{
+    if(command.len>0 && command.ptr==nullptr) {
+      Tempest::Log::e("og_dev_console: NULL command");
+      return OG_CTL_BAD_ARGS;
+      }
+    if(!current().ok())
+      return OG_CTL_NOT_IN_GAME;
+    const std::string line(command.ptr==nullptr ? "" : command.ptr,command.len);
+    // Marvin::exec takes an empty or blank line as success.
+    if(line.find_first_not_of(' ')==std::string::npos) {
+      Tempest::Log::i("og_dev_console: empty command refused");
+      return OG_CTL_REJECTED;
+      }
+    static Marvin marvin;
+    const bool ok = marvin.exec(line);
+    Tempest::Log::i("og_dev_console: '",line,ok ? "' ran" : "' refused");
+    return ok ? OG_CTL_OK : OG_CTL_REJECTED;
     });
   }
 

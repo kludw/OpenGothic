@@ -46,6 +46,9 @@ class InventoryMenu : public Tempest::Widget {
     bool  ransack(Npc& pl,Npc& tr);
     void  open(Npc& pl,Interactive& chest);
     State isOpen() const;
+    // opengothic-rs: the trade partner while the trade screen is open, else nullptr
+    // (main thread only; for the C seam, game/capi).
+    Npc*  ogTrader() const { return state==State::Trade ? trader : nullptr; }
     bool  isActive() const;
     void  onWorldChanged();
 

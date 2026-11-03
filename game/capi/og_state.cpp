@@ -20,6 +20,7 @@
 #include "game/inventory.h"
 #include "game/questlog.h"
 #include "ui/dialogmenu.h"
+#include "ui/inventorymenu.h"
 #include "ui/videowidget.h"
 #include "world/objects/item.h"
 #include "physics/dynamicworld.h"
@@ -131,7 +132,8 @@ struct Fnv {
 
 bool validVisitor(const og_state_visitor* v) {
   return v->header && v->player && v->npc && v->item && v->waypoint && v->dialog &&
-         v->dialog_option && v->inventory_item && v->quest && v->quest_entry;
+         v->dialog_option && v->inventory_item && v->quest && v->quest_entry && v->trade &&
+         v->trade_item;
   }
 
 void visit(Gothic& g, World& w, Npc& pl, const og_state_query& q, const og_state_visitor& v) {
@@ -258,6 +260,7 @@ void visit(Gothic& g, World& w, Npc& pl, const og_state_query& q, const og_state
           og_dialog_option_state o = {};
           o.index = uint32_t(i);
           o.text  = str(c.title);
+          o.trade = c.isTrade ? 1 : 0;
           v.dialog_option(u,&o);
           }
         }
@@ -289,6 +292,33 @@ void visit(Gothic& g, World& w, Npc& pl, const og_state_query& q, const og_state
       v.quest(u,&s);
       for(const auto& entry:quest.entry)
         v.quest_entry(u,str(entry));
+      }
+    }
+
+  Npc* tr = OgHooks::inventoryMenu==nullptr ? nullptr : OgHooks::inventoryMenu->ogTrader();
+  if((q.sections & OG_SECTION_TRADE) && tr!=nullptr) {
+    og_trade_state s = {};
+    s.partner      = ids.npc(*tr);
+    s.partner_name = str(tr->displayName());
+    v.trade(u,&s);
+    // The trade screen's own pages: the trader's (Inventory::T_Trade: no equipped items,
+    // no gold) and the hero's whole inventory but gold (gold isn't sold, Npc::sellItem).
+    // Prices as Npc::buyItem / Npc::sellItem charge them.
+    const std::pair<const Npc*,int32_t> sides[] = {{tr,OG_TRADE_SIDE_TRADER},{&pl,OG_TRADE_SIDE_PLAYER}};
+    for(const auto& [npc,side]:sides) {
+      const auto type = side==OG_TRADE_SIDE_TRADER ? Inventory::T_Trade : Inventory::T_Inventory;
+      for(auto i=npc->inventory().iterator(type); i.isValid(); ++i) {
+        const Item& it = *i;
+        if(it.isGold())
+          continue;
+        og_trade_item_state r = {};
+        r.side     = side;
+        r.instance = str(instanceName(script,it.clsId()));
+        r.name     = str(it.displayName());
+        r.amount   = i.count();
+        r.price    = side==OG_TRADE_SIDE_TRADER ? it.cost() : it.sellCost();
+        v.trade_item(u,&r);
+        }
       }
     }
   }

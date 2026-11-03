@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-#define OG_CAPI_VERSION 10
+#define OG_CAPI_VERSION 11
 
 /* Per-frame context; only valid inside the callback that received it. */
 typedef struct og_ctx og_ctx;
@@ -79,7 +79,8 @@ typedef struct og_vec3 {
 #define OG_SECTION_DIALOG    0x08u
 #define OG_SECTION_INVENTORY 0x10u
 #define OG_SECTION_QUESTS    0x20u
-#define OG_SECTION_ALL       0x3Fu
+#define OG_SECTION_TRADE     0x40u  /* v11 */
+#define OG_SECTION_ALL       0x7Fu
 
 typedef struct og_state_query {
   float    npc_range;      /* cm; NPCs farther from the player are not visited */
@@ -152,6 +153,7 @@ typedef struct og_dialog_state {
 typedef struct og_dialog_option_state {
   uint32_t index;  /* position in the dialog's choice list; what choosing will take (2.3) */
   og_str   text;
+  int32_t  trade;  /* v11: 1 if choosing it opens the trade screen (the script's trade flag) */
 } og_dialog_option_state;
 
 /* One row per stack; a non-stackable item can appear twice (equipped copies, rest). */
@@ -175,9 +177,29 @@ typedef struct og_quest_state {
   int32_t status;   /* OG_QUEST_RUNNING .. OG_QUEST_OBSOLETE */
 } og_quest_state;
 
+/* v11: the open trade screen. */
+typedef struct og_trade_state {
+  uint32_t partner;       /* og_npc_state.id of the trader */
+  og_str   partner_name;
+} og_trade_state;
+
+#define OG_TRADE_SIDE_TRADER 0  /* the trader's goods; price = what the player pays per piece */
+#define OG_TRADE_SIDE_PLAYER 1  /* the player's goods; price = what the trader pays per piece */
+
+/* One row of the trade screen. Gold and the trader's equipped items are not traded and
+ * not listed; the player's equipped items are (selling one takes it off). */
+typedef struct og_trade_item_state {
+  int32_t  side;      /* OG_TRADE_SIDE_* */
+  og_str   instance;
+  og_str   name;
+  uint64_t amount;
+  int64_t  price;
+} og_trade_item_state;
+
 /* Receives the state, in this order: header, player, npcs (nearest first), items
  * (nearest first), waypoints (nearest first), dialog (at most once) then its
- * options, inventory items, quests (each followed by its entries, oldest first).
+ * options, inventory items, quests (each followed by its entries, oldest first),
+ * trade (at most once, only while the trade screen is open) then its items (v11).
  * All callbacks must be non-NULL and must not throw or unwind. */
 typedef struct og_state_visitor {
   void* user;
@@ -191,6 +213,8 @@ typedef struct og_state_visitor {
   void (*inventory_item)(void* user, const og_inventory_item_state* i);
   void (*quest)         (void* user, const og_quest_state* q);
   void (*quest_entry)   (void* user, og_str text);  /* belongs to the last quest */
+  void (*trade)         (void* user, const og_trade_state* t);       /* v11 */
+  void (*trade_item)    (void* user, const og_trade_item_state* i);  /* v11 */
 } og_state_visitor;
 
 #define OG_STATE_OK          0
@@ -244,6 +268,12 @@ int og_set_paused(og_ctx* ctx, int paused);
  * was playing or queued, 0 if not, OG_CTL_BAD_ARGS outside on_frame. */
 int og_skip_videos(og_ctx* ctx);
 
+/* v11, tests and debugging only: runs one Marvin console command (OpenGothic's cheat
+ * console, e.g. "insert ITMI_GOLD", "goto waypoint NW_CITY_01", "set time 8 0").
+ * Returns OG_CTL_OK if the console accepted and ran it, OG_CTL_REJECTED if not (unknown,
+ * incomplete or failed command), OG_CTL_NOT_IN_GAME without a world. Only inside on_frame. */
+int og_dev_console(og_ctx* ctx, og_str command);
+
 #define OG_CMD_GO_TO         1
 #define OG_CMD_TURN_TO       2
 #define OG_CMD_TALK_TO       3
@@ -258,6 +288,12 @@ int og_skip_videos(og_ctx* ctx);
 #define OG_CMD_UNEQUIP      12  /* v9 */
 #define OG_CMD_ATTACK       13  /* v10 */
 #define OG_CMD_FLEE         14  /* v10 */
+#define OG_CMD_TRADE        15  /* v11 */
+
+/* og_command.trade_op (v11). */
+#define OG_TRADE_OPEN 0
+#define OG_TRADE_BUY  1
+#define OG_TRADE_SELL 2
 
 #define OG_TARGET_WAYPOINT 1  /* name */
 #define OG_TARGET_NPC      2  /* id */
@@ -289,7 +325,12 @@ typedef struct og_target {
  * UNEQUIP finish at once.
  * ATTACK: target.id (an NPC); the NPC fight AI drives the player (melee weapon, else
  * fists) until the NPC is down; the weapon is put away when the action ends.
- * FLEE: nothing; runs from the nearest NPC that is fighting the player until 15 m away. */
+ * FLEE: nothing; runs from the nearest NPC that is fighting the player until 15 m away.
+ * TRADE (v11): target.id (an NPC), trade_op, and for BUY/SELL instance + amount (> 0).
+ * If the trade screen with that NPC is not open, the NPC must be the dialog partner and
+ * offer a trade option, which is chosen; the action then waits for the screen. The deal
+ * is all or nothing (refused with the reason, e.g. too little gold). The screen stays
+ * open afterwards (OG_SECTION_TRADE); a valid CHOOSE_DIALOG closes it first. */
 typedef struct og_command {
   int32_t   kind;  /* OG_CMD_* */
   og_target target;
@@ -299,6 +340,8 @@ typedef struct og_command {
   uint32_t  millis;
   float     degrees;
   og_str    instance;   /* v9; game bytes, only read during og_submit */
+  int32_t   trade_op;   /* v11: OG_TRADE_* */
+  uint32_t  amount;     /* v11 */
 } og_command;
 
 /* Starts a command as the host's one action, replacing (cancelling) a running one.

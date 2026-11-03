@@ -538,6 +538,13 @@ void DialogMenu::paintChoice(PaintEvent &e) {
     }
   }
 
+bool DialogMenu::ogChoicesShown() const {
+  // isChoiceMenuActive minus the trade screen, which hides the menu until it closes.
+  // Not while a chosen trade option still has to open the screen (dlgTrade): the menu
+  // would flash up for a frame before it.
+  return choice.size()!=0 && current.time==0 && !haveToWaitOutput() && !dlgTrade;
+  }
+
 bool DialogMenu::isChoiceMenuActive() const {
   return choice.size()!=0 && current.time==0 && !haveToWaitOutput() && trade.isOpen()==InventoryMenu::State::Closed;
   }

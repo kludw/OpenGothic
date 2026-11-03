@@ -47,7 +47,8 @@ class DialogMenu : public Tempest::Widget {
       const Npc*                                partner = nullptr;  // nullptr: no dialog
       const std::string*                        line    = nullptr;  // nullptr: nobody speaking
       bool                                      lineIsPlayer = false;
-      const std::vector<GameScript::DlgChoice>* choices = nullptr;  // nullptr: no menu shown
+      // nullptr: no menu shown. While the trade screen is open: the menu it returns to.
+      const std::vector<GameScript::DlgChoice>* choices = nullptr;
       uint64_t                                  starts  = 0;        // dialogs started so far
       bool                                      important = false;  // last start began with an important info
       };
@@ -60,7 +61,7 @@ class DialogMenu : public Tempest::Widget {
       v.partner      = other;
       v.line         = current.time>0 ? &current.txt : nullptr;
       v.lineIsPlayer = curentIsPl;
-      v.choices      = isChoiceMenuActive() ? &choice : nullptr;
+      v.choices      = ogChoicesShown() ? &choice : nullptr;
       return v;
       }
     // opengothic-rs: picks choice `index` as Enter would; false if no choice menu is shown
@@ -169,6 +170,7 @@ class DialogMenu : public Tempest::Widget {
     bool                                curentIsPl=false;
     bool                                dlgTrade=false;
     // opengothic-rs: see OgView
+    bool                                ogChoicesShown() const;
     uint64_t                            ogStarts=0;
     bool                                ogImportant=false;
     int32_t                             mobsiState=-1;
