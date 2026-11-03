@@ -2,6 +2,7 @@
 
 #include <Tempest/Size>
 #include "resources.h"
+#include "capi/ogformats.h" // opengothic-rs
 
 using namespace Tempest;
 
@@ -10,7 +11,7 @@ GthFont::GthFont():pfnt(new zenkit::Font("", 16, {})) {
 
 GthFont::GthFont(zenkit::Read& data, std::string_view ftex, const Color &cl)
   :pfnt(std::make_shared<zenkit::Font>()), color(cl) {
-  pfnt->load(&data);
+  if(!OgFormats::loadFont(data, ftex, *pfnt)) pfnt->load(&data); // opengothic-rs: Rust fonts (og_formats.h)
   tex = Resources::loadTexture(ftex);
   setScale(1);
   }

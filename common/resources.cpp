@@ -33,6 +33,7 @@
 
 #include "gothic.h"
 #include "capi/ogvfs.h" // opengothic-rs
+#include "capi/ogformats.h" // opengothic-rs
 #include "utils/string_frm.h"
 
 #include <dmusic.h>
@@ -381,6 +382,11 @@ Texture2d Resources::implLoadTextureUncached(std::string_view name, bool forceMi
     std::memcpy(&nameAlt[0]+nameAlt.size()-6, "-C.TEX", 6);
 
     if(const auto* entry = Resources::vdfsIndex().find(nameAlt)) {
+      OgFormats::TextureTimer timer; // opengothic-rs: load-time check (og_formats.h)
+      if(auto rt = OgFormats::loadTexture(*entry, nameAlt)) { // opengothic-rs: Rust textures (og_formats.h)
+        if(rt->isDds()) { auto rd = zenkit::Read::from(reinterpret_cast<const std::byte*>(rt->data()), rt->size()); return implLoadTextureUncached(name, *rd, forceMips); }
+        try { Tempest::Pixmap pm(rt->width(), rt->height(), TextureFormat::RGBA8); std::memcpy(pm.data(), rt->data(), rt->size()); return dev.texture(pm); } catch(...) {}
+        } else {
       zenkit::Texture tex;
 
       auto reader = entry->open_read();
@@ -406,6 +412,7 @@ Texture2d Resources::implLoadTextureUncached(std::string_view name, bool forceMi
         catch (...) {
           }
         }
+        } // opengothic-rs: end of the stock ZenKit branch
       }
     }
 
