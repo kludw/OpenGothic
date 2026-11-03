@@ -27,6 +27,7 @@
 #include "ui/videowidget.h"
 #include "utils/keycodec.h"
 #include "world/aiqueue.h"
+#include "world/objects/interactive.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
 #include "world/waypoint.h"
@@ -62,6 +63,11 @@ constexpr uint64_t FLEE_TIMEOUT = 30000;
 constexpr float    FLEE_SAFE    = 1500;
 // The trade option's lines are spoken before the trade screen opens.
 constexpr uint64_t TRADE_OPEN_TIMEOUT = 30000;
+// sleep: walking to the bed and lying down until its sleep dialog shows, then getting up.
+constexpr uint64_t SLEEP_LIE_TIMEOUT   = 30000;
+constexpr uint64_t SLEEP_GETUP_TIMEOUT = 15000;
+// Bed schemes (the visual's name up to its first '_'); scripts use these three.
+constexpr std::string_view BED_SCHEMES[] = {"BEDHIGH","BEDLOW","BED"};
 // Farther than this, attack walks the waynet first: the fight AI's own pathing went back
 // and forth at ~20 m from a field raider by Xardas' tower for minutes.
 constexpr float    ATTACK_NEAR  = 500;
@@ -69,7 +75,7 @@ constexpr float    TURN_DONE    = 2.f;  // degrees
 // Upper bound for wait: keeps the seconds->ms conversion defined (og_capi.h).
 constexpr float    WAIT_MAX_S   = 86400.f;
 
-enum class Kind : uint8_t { None, GoTo, Turn, TalkTo, Wait, PickUp, Step, Jump, UseItem, Attack, Flee, Trade, Done };
+enum class Kind : uint8_t { None, GoTo, Turn, TalkTo, Wait, PickUp, Step, Jump, UseItem, Attack, Flee, Trade, Sleep, Done };
 
 struct Action {
   Kind             kind  = Kind::None;
@@ -101,6 +107,10 @@ struct Action {
   int32_t          tradeOp = OG_TRADE_OPEN;
   std::string      ware;
   uint32_t         amount  = 0;
+  // sleep: the bed's scheme, its top state and the hour to wake up at.
+  std::string      mob;
+  int32_t          mobState = 0;
+  int32_t          hour     = 0;
   };
 
 Action act;
@@ -181,14 +191,27 @@ void sheathe(Npc* pl) {
     Tempest::Log::i("og_control: the weapon could not be put away (animation busy)");
   }
 
+bool inDialog();
+bool endBedDialog(World& w, Npc& pl);
+
 // Ends the current action without reporting it. pl: the player of the action's world,
 // or nullptr if that world is gone.
 void cancel(Npc* pl) {
   releaseKey();
   endFight(pl);
   sheathe(pl);
-  if(act.usesAi && pl!=nullptr && act.generation==OgHooks::worldGeneration)
+  const bool same = pl!=nullptr && act.generation==OgHooks::worldGeneration;
+  if(act.usesAi && same)
     pl->clearAiQueue();
+  // A cancelled sleep must not leave the hero lying in the bed, nor in its dialog (the
+  // get-up waits in the AI queue until the dialog is gone). If END can't be picked yet,
+  // the agent can still choose it.
+  if(act.kind==Kind::Sleep && same && pl->interactive()!=nullptr) {
+    const bool bedDialog = OgHooks::dialogMenu!=nullptr && OgHooks::dialogMenu->ogView().partner==pl;
+    if(bedDialog && !endBedDialog(pl->world(),*pl))
+      Tempest::Log::i("og_control: the bed's dialog stays open; choose its END option");
+    pl->aiPush(AiQueue::aiUseMob(act.mob,-1));
+    }
   act = Action{};
   }
 
@@ -244,6 +267,23 @@ Current current() {
 
 bool inDialog() {
   return OgHooks::dialogMenu!=nullptr && OgHooks::dialogMenu->ogView().partner!=nullptr;
+  }
+
+// Picks END (PC_NOSLEEP_INFO) in the hero's bed dialog, as a click would; false while the
+// menu shows no options (e.g. it waits for queued output) or has no such option.
+bool endBedDialog(World& w, Npc& pl) {
+  if(OgHooks::dialogMenu==nullptr)
+    return false;
+  const DialogMenu::OgView v = OgHooks::dialogMenu->ogView();
+  if(v.partner!=&pl || v.choices==nullptr)
+    return false;
+  const size_t end = w.script().findSymbolIndex("PC_NOSLEEP_INFO");
+  if(end==size_t(-1))
+    return false;
+  for(size_t i=0; i<v.choices->size(); ++i)
+    if((*v.choices)[i].scriptFn==end)
+      return OgHooks::dialogMenu->ogChoose(i);
+  return false;
   }
 
 // The trade partner while the trade screen is open, else nullptr.
@@ -676,6 +716,30 @@ int submit(const og_command& cmd, char* out, size_t cap) {
       Tempest::Log::i("og_submit: chose trade option ",opt," of ",who);
       return OG_CTL_OK;
       }
+    case OG_CMD_SLEEP: {
+      if(cmd.hour<0 || cmd.hour>23)
+        return reject(out,cap,"hour must be between 0 and 23");
+      if(pl.weaponState()!=WeaponState::NoWeapon)
+        return reject(out,cap,"can't lie down with a weapon drawn");
+      Interactive* bed = nullptr;
+      for(auto scheme:BED_SCHEMES) {
+        Interactive* i = w.availableMob(pl,scheme);
+        if(i!=nullptr && (bed==nullptr || pl.qDistTo(*i)<pl.qDistTo(*bed))) {
+          bed   = i;
+          a.mob = std::string(scheme);
+          }
+        }
+      if(bed==nullptr)
+        return reject(out,cap,"no free bed within "+meters(float(MOBSI_SEARCH_DISTANCE))+"; go next to one first");
+      a.kind     = Kind::Sleep;
+      a.usesAi   = true;
+      a.hour     = cmd.hour;
+      a.mobState = bed->stateCount();
+      a.until    = a.start+SLEEP_LIE_TIMEOUT;
+      Tempest::Log::i("og_submit: sleep until ",cmd.hour,":00 in a ",a.mob," bed ",
+                      meters(std::sqrt(pl.qDistTo(*bed)))," away (state ",a.mobState,")");
+      break;
+      }
     case OG_CMD_USE_ITEM: {
       std::string name;
       Item* it = heldItem(w,pl,cmd.instance,a.cls,name,why);
@@ -773,6 +837,9 @@ int submit(const og_command& cmd, char* out, size_t cap) {
     case Kind::Step:
       if(act.until>act.start)
         press(key);
+      break;
+    case Kind::Sleep:
+      pl.aiPush(AiQueue::aiUseMob(act.mob,act.mobState));
       break;
     default:
       break;
@@ -970,6 +1037,64 @@ int update(char* out, size_t cap) {
         if(!no.empty())
           return fail(out,cap,&pl,no);
         }
+      return finish(&pl);
+      }
+
+    case Kind::Sleep: {
+      // 0: walking to the bed and lying down until its sleep dialog shows its options.
+      if(act.phase==0) {
+        const DialogMenu::OgView v = OgHooks::dialogMenu==nullptr ? DialogMenu::OgView{} : OgHooks::dialogMenu->ogView();
+        if(v.partner!=nullptr && v.partner!=&pl)
+          return fail(out,cap,&pl,std::string(v.partner->displayName())+" started talking before the hero lay down");
+        if(v.partner==nullptr || v.choices==nullptr) {
+          if(pl.isAiQueueEmpty() && pl.interactive()==nullptr)
+            return fail(out,cap,&pl,"could not lie down in the bed (taken or out of reach)");
+          if(now>act.until)
+            return fail(out,cap,&pl,"the bed offered no sleep (no sleep dialog)");
+          return OG_ACTION_RUNNING;
+          }
+        // The bed's options each call PC_SLEEP with a fixed hour; any hour is the same
+        // call. Run outside the menu it leaves the menu open with its options (seen), so
+        // the menu is then ended by its own END option (PC_NOSLEEP_INFO, the stock click
+        // path), which makes it recheck its options and close.
+        const gtime before = w.time();
+        act.phase = 1;
+        act.until = now+SLEEP_GETUP_TIMEOUT;
+        bool slept = false;
+        try {
+          slept = w.script().ogCallInt(pl,"PC_SLEEP",act.hour);
+          }
+        catch(const std::exception& e) {
+          return fail(out,cap,&pl,std::string("PC_SLEEP failed: ")+e.what());
+          }
+        if(!slept)
+          return fail(out,cap,&pl,"the scripts have no PC_SLEEP(int)");
+        Tempest::Log::i("og_action_update: slept from ",before.hour(),":",before.minute(),
+                        " (day ",before.day(),") until ",w.time().hour(),":",w.time().minute(),
+                        " (day ",w.time().day(),")");
+        }
+      // 1: picking END once the menu takes it; 2: waiting for the dialog to close;
+      // 3: getting up.
+      if(now>act.until)
+        return fail(out,cap,&pl,act.phase<=2 ? "the bed's dialog did not end" : "the hero did not get up");
+      if(act.phase==1) {
+        if(!endBedDialog(w,pl))
+          return OG_ACTION_RUNNING;
+        act.phase = 2;
+        return OG_ACTION_RUNNING;
+        }
+      if(act.phase==2) {
+        if(inDialog())
+          return OG_ACTION_RUNNING;
+        if(pl.interactive()!=nullptr && pl.isAiQueueEmpty()) {
+          pl.aiPush(AiQueue::aiUseMob(act.mob,-1));
+          Tempest::Log::i("og_action_update: the bed's dialog ended; getting up");
+          }
+        act.phase = 3;
+        return OG_ACTION_RUNNING;
+        }
+      if(pl.interactive()!=nullptr || !pl.isAiQueueEmpty())
+        return OG_ACTION_RUNNING;
       return finish(&pl);
       }
 

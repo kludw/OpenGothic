@@ -1377,6 +1377,19 @@ void GameScript::useInteractive(const std::shared_ptr<zenkit::INpc>& hnpc, std::
     }
   }
 
+bool GameScript::ogCallInt(Npc& npc, std::string_view func, int32_t arg) {
+  auto fn = vm.find_symbol_by_name(func);
+  if(fn==nullptr || fn->type()!=zenkit::DaedalusDataType::FUNCTION)
+    return false;
+  auto params = vm.find_parameters_for_function(fn);
+  if(params.size()!=1 || params[0].type()!=zenkit::DaedalusDataType::INT)
+    return false;
+  ScopeVar self (*vm.global_self(),  npc.handlePtr());
+  ScopeVar other(*vm.global_other(), npc.handlePtr());
+  vm.call_function(fn,arg);
+  return true;
+  }
+
 Attitude GameScript::guildAttitude(const Npc &p0, const Npc &p1) const {
   auto selfG = std::min<size_t>(gilCount-1,p0.guild());
   auto npcG  = std::min<size_t>(gilCount-1,p1.guild());

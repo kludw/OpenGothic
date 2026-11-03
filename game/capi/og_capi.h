@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-#define OG_CAPI_VERSION 11
+#define OG_CAPI_VERSION 12
 
 /* Per-frame context; only valid inside the callback that received it. */
 typedef struct og_ctx og_ctx;
@@ -289,6 +289,7 @@ int og_dev_console(og_ctx* ctx, og_str command);
 #define OG_CMD_ATTACK       13  /* v10 */
 #define OG_CMD_FLEE         14  /* v10 */
 #define OG_CMD_TRADE        15  /* v11 */
+#define OG_CMD_SLEEP        16  /* v12 */
 
 /* og_command.trade_op (v11). */
 #define OG_TRADE_OPEN 0
@@ -330,7 +331,11 @@ typedef struct og_target {
  * If the trade screen with that NPC is not open, the NPC must be the dialog partner and
  * offer a trade option, which is chosen; the action then waits for the screen. The deal
  * is all or nothing (refused with the reason, e.g. too little gold). The screen stays
- * open afterwards (OG_SECTION_TRADE); a valid CHOOSE_DIALOG closes it first. */
+ * open afterwards (OG_SECTION_TRADE); a valid CHOOSE_DIALOG closes it first.
+ * SLEEP (v12): hour (0..23). The player lies down in the nearest free bed within 10 m,
+ * waits for the bed's sleep dialog, runs the scripts' PC_SLEEP(hour) (what that dialog's
+ * options call: sets the clock to the next such hour, restores health and mana, ends the
+ * dialog) and gets up; finishes once the player stands again. */
 typedef struct og_command {
   int32_t   kind;  /* OG_CMD_* */
   og_target target;
@@ -342,6 +347,7 @@ typedef struct og_command {
   og_str    instance;   /* v9; game bytes, only read during og_submit */
   int32_t   trade_op;   /* v11: OG_TRADE_* */
   uint32_t  amount;     /* v11 */
+  int32_t   hour;       /* v12 */
 } og_command;
 
 /* Starts a command as the host's one action, replacing (cancelling) a running one.

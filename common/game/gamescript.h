@@ -162,6 +162,10 @@ class GameScript final {
     void     printNothingToGet();
     float    tradeValueMultiplier() const { return tradeValMult; }
     void     useInteractive(const std::shared_ptr<zenkit::INpc>& hnpc, std::string_view func);
+    // opengothic-rs: runs script function `func(arg)` with self and other = npc, as a
+    // mobsi dialog's options run (the C seam's sleep calls PC_SLEEP). false if there is
+    // no such function or it takes something else than one int.
+    bool     ogCallInt(Npc& npc, std::string_view func, int32_t arg);
     Attitude guildAttitude(const Npc& p0,const Npc& p1) const;
     Attitude personAttitude(const Npc& p0,const Npc& p1) const;
     bool     isFriendlyFire(const Npc& src, const Npc& dst) const;
