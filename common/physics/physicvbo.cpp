@@ -3,6 +3,8 @@
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "collisionworld.h"
 
+#include <cstring>
+
 PhysicVbo::PhysicVbo(PackedMesh&& packed)
   :PhysicVbo(packed.vertices) {
   id = std::move(packed.indices);
@@ -115,4 +117,38 @@ std::string_view PhysicVbo::validateSectorName(std::string_view name) const {
     if(name==i.sector)
       return i.sector;
   return "";
+  }
+
+uint32_t PhysicVbo::ogTriangles() const {
+  uint32_t n = 0;
+  for(auto& i:segments)
+    n += uint32_t(i.size);
+  return n;
+  }
+
+uint64_t PhysicVbo::ogHash() const {
+  uint64_t h = 1469598103934665603ull;
+  auto bytes = [&h](const void* p, size_t n) {
+    auto b = static_cast<const uint8_t*>(p);
+    for(size_t i=0; i<n; ++i) {
+      h ^= b[i];
+      h *= 1099511628211ull;
+      }
+    };
+  for(auto& v:vert) {
+    // btVector3's fourth lane is padding, not data.
+    const float xyz[3] = {v.x(), v.y(), v.z()};
+    bytes(xyz,sizeof(xyz));
+    }
+  for(auto& s:segments) {
+    const auto mat = uint8_t(s.mat);
+    bytes(&mat,1);
+    if(s.sector!=nullptr)
+      bytes(s.sector,std::strlen(s.sector));
+    const uint8_t z = 0;
+    bytes(&z,1);
+    if(s.size>0)
+      bytes(&id[s.off],size_t(s.size)*3*sizeof(id[0]));
+    }
+  return h;
   }

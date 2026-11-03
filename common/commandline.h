@@ -48,10 +48,14 @@ class CommandLine {
     bool                doForceG2NR()      const { return forceG2NR;    }
     bool                aaPreset()         const { return aaPresetId;   }
     std::string_view    defaultSave()      const { return saveDef;    }
+    // opengothic-rs (task 6.2): `--physics-trace <path>`, empty without the flag.
+    std::string_view    physicsTrace()     const { return physTrace;  }
 
     std::string         wrldDef;
 
   private:
+    std::string         physTrace;
+
     bool                validateGothicPath() const;
 
     GraphicBackend      graphics = GraphicBackend::Vulkan;

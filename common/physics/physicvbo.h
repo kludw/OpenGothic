@@ -31,6 +31,17 @@ class PhysicVbo : public btTriangleIndexVertexArray {
 
     std::string_view        validateSectorName(std::string_view name) const;
 
+    // opengothic-rs (task 6.2, physics trace): collision triangles (disabled materials
+    // excluded) and an FNV-1a hash of what collides: vertex xyz, then per segment its
+    // material group, sector name and triangle indices.
+    uint32_t                ogTriangles() const;
+    uint64_t                ogHash() const;
+    // Read-only views for the trace's shape records (vertices in metres, as Bullet sees them).
+    auto                    ogVertices() const -> const std::vector<btVector3>& { return vert; }
+    size_t                  ogSegmentCount() const { return segments.size(); }
+    uint32_t                ogSegmentTriangles(size_t segment) const { return uint32_t(segments[segment].size); }
+    const uint32_t*         ogSegmentIndices(size_t segment) const { return id.data()+segments[segment].off; }
+
   private:
     PhysicVbo(const std::vector<Vertex>& v);
 

@@ -158,6 +158,13 @@ CommandLine::CommandLine(int argc, const char** argv) {
       if(i<argc)
         isRtSm = boolArg(argv[i]);
       }
+    else if(arg=="--physics-trace") {
+      // opengothic-rs (task 6.2): see game/capi/og_phys_trace.h
+      ++i;
+      if(i>=argc)
+        throw std::runtime_error("--physics-trace needs a path");
+      physTrace = argv[i];
+      }
     else {
       Log::i("unrecognized commandline option: \"", arg, "\"");
       }

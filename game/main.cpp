@@ -25,6 +25,7 @@
 #include "build.h"
 #include "commandline.h"
 #include "og_main.h"
+#include "physics/phystrace.h"
 #include "capi/og_capi.h"
 #include "capi/og_capi_internal.h"
 
@@ -197,6 +198,9 @@ struct OgMain::Engine {
     :cmd{argc,argv}, api(mkApi(cmd)), device{*api,selectGpu(*api)},
      // As og_main did: the device's own name goes to the crash log right after the device.
      resources{(CrashLog::setGpu(device.properties().name), device)} {
+    // opengothic-rs (task 6.2): before any world exists, so the trace sees all of them.
+    if(!cmd.physicsTrace().empty())
+      PhysTrace::open(std::string(cmd.physicsTrace()));
     gothic.setupGlobalScripts();
     wx.emplace(device);
     app.emplace();
@@ -220,9 +224,14 @@ MainWindow& OgMain::window(Engine& e) {
 
 void OgMain::shutdown(Engine* e) {
   delete e;
+  // After the engine: worlds destroyed with it still write their records.
+  PhysTrace::close();
   }
 
 int og_main(int argc,const char** argv) {
+  // Closes the physics trace after the engine, also when exec() throws (declared first,
+  // destroyed last).
+  struct TraceCloser { ~TraceCloser(){ PhysTrace::close(); } } closer;
   std::unique_ptr<OgMain::Engine> e{OgMain::init(argc,argv)};
   return e->app->exec();
   }

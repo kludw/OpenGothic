@@ -121,6 +121,7 @@ class DynamicWorld final {
         NpcBody*            obj    = nullptr;
 
         auto  implTryMove    (const Tempest::Vec3& dp, const Tempest::Vec3& pos0, CollisionTest& out) -> DynamicWorld::MoveCode;
+        auto  untracedTryMove(const Tempest::Vec3& to, CollisionTest& out) -> DynamicWorld::MoveCode;
         void  implSetPosition(const Tempest::Vec3& pos);
 
       friend class DynamicWorld;
@@ -150,6 +151,8 @@ class DynamicWorld final {
         DynamicWorld*       owner  = nullptr;
         btCollisionObject*  obj    = nullptr;
         btCollisionShape*   shp    = nullptr;
+
+      friend class DynamicWorld;
       };
 
     struct RayLandResult {
@@ -301,6 +304,16 @@ class DynamicWorld final {
     void           moveBullet(BulletBody& b, const Tempest::Vec3& dir, uint64_t dt);
     RayWaterResult implWaterRay(const Tempest::Vec3& from, const Tempest::Vec3& to, float stepHeight) const;
     bool           hasCollision(const NpcItem &it, CollisionTest& out);
+
+    // opengothic-rs (task 6.2): the stock bodies of public calls that the physics trace
+    // (common/physics/phystrace.h) wraps.
+    RayLandResult  untracedRay          (const Tempest::Vec3& from, const Tempest::Vec3& to) const;
+    RayLandResult  untracedSweep        (const Tempest::Vec3& from, const Tempest::Vec3& to, float R) const;
+    RayCamResult   untracedCameraRay    (const Tempest::Vec3& from, const Tempest::Vec3& to) const;
+    float          untracedSoundOclusion(const Tempest::Vec3& from, const Tempest::Vec3& to) const;
+
+    // The physics trace's number of this world (0: not traced).
+    uint32_t                           traceWorld = 0;
 
     std::unique_ptr<CollisionWorld>    world;
 

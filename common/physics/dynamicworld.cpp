@@ -3,6 +3,8 @@
 #include "collisionworld.h"
 #include "physicmeshshape.h"
 #include "physicvbo.h"
+#include "phystrace.h"
+#include "../../game/capi/og_phys_trace.h"
 #include "graphics/mesh/skeleton.h"
 
 #include <algorithm>
@@ -53,6 +55,17 @@ static DynamicWorld::RayLandResult toResult(btCollisionWorld::ClosestRayResultCa
     ret.vob = reinterpret_cast<Interactive*>(cb.m_collisionObject->getUserPointer());
     }
   return ret;
+  }
+
+// opengothic-rs (task 6.2): physics trace encodings (game/capi/og_phys_trace.h).
+static void traceLand(PhysTrace::Rec& r, const DynamicWorld::RayLandResult& v) {
+  r.vec3(v.v).vec3(v.n).u8(uint8_t(v.mat)).u8(v.hasCol ? 1 : 0).f32(v.hitFraction)
+   .str(v.sector).u32(PhysTrace::payload(v.vob)).u32(PhysTrace::payload(v.uptr));
+  }
+
+static void traceColl(PhysTrace::Rec& r, const DynamicWorld::CollisionTest& v) {
+  r.vec3(v.partial).vec3(v.normal).u8(v.preFall ? 1 : 0).u32(PhysTrace::payload(v.vob))
+   .u32(PhysTrace::payload(v.npc)).f32(v.npcCol).u8(v.landCol ? 1 : 0);
   }
 
 struct DynamicWorld::HumShape:btCapsuleShape {
@@ -486,8 +499,10 @@ struct DynamicWorld::BulletsList final {
   void tick(uint64_t dt) {
     for(auto& i:body) {
       wrld.moveBullet(i,i.dir,dt);
-      if(i.cb!=nullptr)
+      if(i.cb!=nullptr) {
+        PhysTrace::Callback cb(wrld.traceWorld,OG_PT_CB_BULLET_MOVE);
         i.cb->onMove();
+        }
       }
     }
 
@@ -496,8 +511,15 @@ struct DynamicWorld::BulletsList final {
       float proj = 0;
       auto  dp = i.pos - i.lastPos; // move is symetrical: move of npc and move of projectile is the same
       if(i.cb!=nullptr && list.rayTest(npc, i.pos, Tempest::Vec3::normalize(dp), dp.length(), i.tgRange, proj)) {
-        if(i.cb->onCollide(*npc.toNpc()))
+        bool stop = false;
+        {
+        PhysTrace::Callback cb(wrld.traceWorld,OG_PT_CB_BULLET_HIT_NPC);
+        stop = i.cb->onCollide(*npc.toNpc());
+        }
+        if(stop) {
+          PhysTrace::Callback cb(wrld.traceWorld,OG_PT_CB_BULLET_STOP);
           i.cb->onStop();
+          }
         }
       }
     }
@@ -618,8 +640,19 @@ DynamicWorld::DynamicWorld(World* owner, const zenkit::Mesh& worldMesh) {
   bulletList.reset(new BulletsList(*this));
   bboxList  .reset(new BBoxList   (*this));
 
+  if(PhysTrace::active()) {
+    traceWorld = PhysTrace::addWorld(this);
+    PhysTrace::Rec r(OG_PT_WORLD_CREATE,traceWorld);
+    if(owner!=nullptr)
+      r.str(owner->name()); else
+      r.str(static_cast<const char*>(nullptr));
+    r.u32(uint32_t(landVbo.size())).u32(landMesh->ogTriangles()).u32(waterMesh->ogTriangles())
+     .u32(uint32_t(sectors.size())).u64(landMesh->ogHash()).u64(waterMesh->ogHash());
+    }
+
   if(owner!=nullptr) {
-    world->setItemHitCallback([owner](::Item& itm, zenkit::MaterialGroup mat, float impulse, float mass) {
+    world->setItemHitCallback([this,owner](::Item& itm, zenkit::MaterialGroup mat, float impulse, float mass) {
+      PhysTrace::Callback cb(traceWorld,OG_PT_CB_ITEM_HIT);
       auto  snd = owner->addLandHitEffect(ItemMaterial(itm.handle().material),mat,itm.transform());
       float v   = impulse/mass;
       float vol = snd.volume()*std::min(v/10.f,1.f);
@@ -630,23 +663,54 @@ DynamicWorld::DynamicWorld(World* owner, const zenkit::Mesh& worldMesh) {
   }
 
 DynamicWorld::~DynamicWorld(){
+  if(traceWorld!=0) {
+    PhysTrace::removeWorld(this);
+    PhysTrace::Rec r(OG_PT_WORLD_DESTROY,traceWorld);
+    }
   }
 
 DynamicWorld::RayLandResult DynamicWorld::landRay(const Tempest::Vec3& from, float maxDy) const {
+  PhysTrace::Call call;
+  const float dy = maxDy;
   world->updateAabbs();
   if(maxDy==0)
     maxDy = worldHeight;
-  return ray(from, Tempest::Vec3(from.x,from.y-maxDy,from.z));
+  auto ret = ray(from, Tempest::Vec3(from.x,from.y-maxDy,from.z));
+  if(call.record()) {
+    PhysTrace::Rec r(OG_PT_QUERY,traceWorld);
+    r.u8(OG_PT_Q_LAND_RAY).u64(call.ns()).vec3(from).f32(dy);
+    traceLand(r,ret);
+    }
+  return ret;
   }
 
 DynamicWorld::RayLandResult DynamicWorld::landSweep(const Tempest::Vec3& from, float R, float maxDy) const {
+  PhysTrace::Call call;
+  const float dy = maxDy;
   world->updateAabbs();
   if(maxDy==0)
     maxDy = worldHeight;
-  return sweep(from, Tempest::Vec3(from.x,from.y-maxDy,from.z), R);
+  auto ret = sweep(from, Tempest::Vec3(from.x,from.y-maxDy,from.z), R);
+  if(call.record()) {
+    PhysTrace::Rec r(OG_PT_QUERY,traceWorld);
+    r.u8(OG_PT_Q_LAND_SWEEP).u64(call.ns()).vec3(from).f32(R).f32(dy);
+    traceLand(r,ret);
+    }
+  return ret;
   }
 
 DynamicWorld::RayLandResult DynamicWorld::sweep(const Tempest::Vec3& from, const Tempest::Vec3& to, float R) const {
+  PhysTrace::Call call;
+  auto ret = untracedSweep(from,to,R);
+  if(call.record()) {
+    PhysTrace::Rec r(OG_PT_QUERY,traceWorld);
+    r.u8(OG_PT_Q_SWEEP).u64(call.ns()).vec3(from).vec3(to).f32(R);
+    traceLand(r,ret);
+    }
+  return ret;
+  }
+
+DynamicWorld::RayLandResult DynamicWorld::untracedSweep(const Tempest::Vec3& from, const Tempest::Vec3& to, float R) const {
   struct CallBack:btCollisionWorld::ClosestRayResultCallback {
     using ClosestRayResultCallback::ClosestRayResultCallback;
     zenkit::MaterialGroup matId  = zenkit::MaterialGroup::UNDEFINED;
@@ -681,8 +745,14 @@ DynamicWorld::RayLandResult DynamicWorld::sweep(const Tempest::Vec3& from, const
   }
 
 DynamicWorld::RayWaterResult DynamicWorld::waterRay(const Tempest::Vec3& from, float stepHeight) const {
+  PhysTrace::Call call;
   world->updateAabbs();
-  return implWaterRay(from, Tempest::Vec3(from.x,from.y+worldHeight,from.z), stepHeight);
+  auto ret = implWaterRay(from, Tempest::Vec3(from.x,from.y+worldHeight,from.z), stepHeight);
+  if(call.record()) {
+    PhysTrace::Rec r(OG_PT_QUERY,traceWorld);
+    r.u8(OG_PT_Q_WATER_RAY).u64(call.ns()).vec3(from).f32(stepHeight).f32(ret.wdepth).u8(ret.hasCol ? 1 : 0);
+    }
+  return ret;
   }
 
 DynamicWorld::RayWaterResult DynamicWorld::implWaterRay(const Tempest::Vec3& from, const Tempest::Vec3& to, float stepHeight) const {
@@ -731,6 +801,16 @@ DynamicWorld::RayWaterResult DynamicWorld::implWaterRay(const Tempest::Vec3& fro
   }
 
 DynamicWorld::RayCamResult DynamicWorld::cameraRay(const Tempest::Vec3& from, const Tempest::Vec3& to) const {
+  PhysTrace::Call call;
+  auto ret = untracedCameraRay(from,to);
+  if(call.record()) {
+    PhysTrace::Rec r(OG_PT_QUERY,traceWorld);
+    r.u8(OG_PT_Q_CAMERA_RAY).u64(call.ns()).vec3(from).vec3(to).i32(ret.waterCol);
+    }
+  return ret;
+  }
+
+DynamicWorld::RayCamResult DynamicWorld::untracedCameraRay(const Tempest::Vec3& from, const Tempest::Vec3& to) const {
   struct CallBack:btCollisionWorld::AllHitsRayResultCallback {
     using AllHitsRayResultCallback::AllHitsRayResultCallback;
 
@@ -764,6 +844,17 @@ DynamicWorld::RayCamResult DynamicWorld::cameraRay(const Tempest::Vec3& from, co
   }
 
 DynamicWorld::RayLandResult DynamicWorld::ray(const Tempest::Vec3& from, const Tempest::Vec3& to) const {
+  PhysTrace::Call call;
+  auto ret = untracedRay(from,to);
+  if(call.record()) {
+    PhysTrace::Rec r(OG_PT_QUERY,traceWorld);
+    r.u8(OG_PT_Q_RAY).u64(call.ns()).vec3(from).vec3(to);
+    traceLand(r,ret);
+    }
+  return ret;
+  }
+
+DynamicWorld::RayLandResult DynamicWorld::untracedRay(const Tempest::Vec3& from, const Tempest::Vec3& to) const {
   struct CallBack:btCollisionWorld::ClosestRayResultCallback {
     using ClosestRayResultCallback::ClosestRayResultCallback;
     zenkit::MaterialGroup matId  = zenkit::MaterialGroup::UNDEFINED;
@@ -798,16 +889,33 @@ DynamicWorld::RayLandResult DynamicWorld::ray(const Tempest::Vec3& from, const T
   }
 
 DynamicWorld::RayQueryResult DynamicWorld::rayNpc(const Tempest::Vec3& from, const Tempest::Vec3& to, const Npc* except) const {
+  PhysTrace::Call call;
   RayQueryResult r;
   static_cast<RayLandResult&>(r) = ray(from,to);
   if(auto ptr = npcList->rayTest(from, (r.hasCol ? r.v : to), 1, except)) {
     r.npcHit = ptr->toNpc();
     r.hasCol = true;
     }
+  if(call.record()) {
+    PhysTrace::Rec t(OG_PT_QUERY,traceWorld);
+    t.u8(OG_PT_Q_RAY_NPC).u64(call.ns()).vec3(from).vec3(to).u32(PhysTrace::payload(except));
+    traceLand(t,r);
+    t.u32(PhysTrace::payload(r.npcHit));
+    }
   return r;
   }
 
 float DynamicWorld::soundOclusion(const Tempest::Vec3& from, const Tempest::Vec3& to) const {
+  PhysTrace::Call call;
+  auto ret = untracedSoundOclusion(from,to);
+  if(call.record()) {
+    PhysTrace::Rec r(OG_PT_QUERY,traceWorld);
+    r.u8(OG_PT_Q_SOUND_OCCLUSION).u64(call.ns()).vec3(from).vec3(to).f32(ret);
+    }
+  return ret;
+  }
+
+float DynamicWorld::untracedSoundOclusion(const Tempest::Vec3& from, const Tempest::Vec3& to) const {
   struct CallBack:btCollisionWorld::AllHitsRayResultCallback {
     using AllHitsRayResultCallback::AllHitsRayResultCallback;
 
@@ -862,19 +970,55 @@ DynamicWorld::NpcItem DynamicWorld::addGhostObj(const Skeleton* src) {
     max.y += src->rootTr.y;
     }
   auto obj = npcList->create(min,max);
+  if(traceWorld!=0) {
+    auto o = PhysTrace::addObject(obj,traceWorld);
+    PhysTrace::Rec(OG_PT_OBJ_ADD,traceWorld).u32(o.id).u8(OG_PT_OBJ_NPC).vec3(min).vec3(max);
+    }
   return NpcItem(this,obj);
+  }
+
+// opengothic-rs (task 6.2): OBJ_ADD of a mesh-shaped object.
+static void traceMeshObj(uint32_t world, const void* obj, uint8_t kind,
+                         const PhysicMeshShape& shape, const PhysicVbo& mesh, const Tempest::Matrix4x4& m) {
+  const uint64_t hash  = mesh.ogHash();
+  bool           first = false;
+  const uint32_t shp   = PhysTrace::shape(&shape,hash,first);
+  if(first) {
+    PhysTrace::Rec r(OG_PT_SHAPE,world);
+    auto& vert = mesh.ogVertices();
+    r.u32(shp).u64(hash).u32(uint32_t(vert.size()));
+    for(auto& v:vert)
+      r.f32(v.x()).f32(v.y()).f32(v.z());
+    r.u32(uint32_t(mesh.ogSegmentCount()));
+    for(size_t i=0; i<mesh.ogSegmentCount(); ++i) {
+      const uint32_t tris = mesh.ogSegmentTriangles(i);
+      const uint32_t* idx = mesh.ogSegmentIndices(i);
+      r.u8(uint8_t(mesh.materialId(i))).str(mesh.sectorName(i)).u32(tris);
+      for(uint32_t k=0; k<tris*3; ++k)
+        r.u32(idx[k]);
+      }
+    }
+  auto o = PhysTrace::addObject(obj,world);
+  PhysTrace::Rec(OG_PT_OBJ_ADD,world).u32(o.id).u8(kind).u32(shp).f32(shape.friction())
+    .u32(mesh.ogTriangles()).u64(hash).mat4(m);
   }
 
 DynamicWorld::Item DynamicWorld::addStaticObj(const PhysicMeshShape *shape, const Tempest::Matrix4x4 &m) {
   if(shape==nullptr)
     return Item();
-  return createObj(&shape->shape,false,m,0,shape->friction(),IT_Static);
+  auto ret = createObj(&shape->shape,false,m,0,shape->friction(),IT_Static);
+  if(traceWorld!=0)
+    traceMeshObj(traceWorld,ret.obj,OG_PT_OBJ_STATIC,*shape,shape->mesh,m);
+  return ret;
   }
 
 DynamicWorld::Item DynamicWorld::addMovableObj(const PhysicMeshShape* shape, const Tempest::Matrix4x4& m) {
   if(shape==nullptr)
     return Item();
-  return createObj(&shape->shape,false,m,0,shape->friction(),IT_Movable);
+  auto ret = createObj(&shape->shape,false,m,0,shape->friction(),IT_Movable);
+  if(traceWorld!=0)
+    traceMeshObj(traceWorld,ret.obj,OG_PT_OBJ_MOVABLE,*shape,shape->mesh,m);
+  return ret;
   }
 
 DynamicWorld::Item DynamicWorld::addDynamicObj(const Tempest::Matrix4x4& pos, const Bounds& b, zenkit::MaterialGroup mat) {
@@ -888,7 +1032,13 @@ DynamicWorld::Item DynamicWorld::addDynamicObj(const Tempest::Matrix4x4& pos, co
     hExt[i] = std::max(hExt[i]*0.5f,0.15f);
 
   std::unique_ptr<btCollisionShape> shape { new btBoxShape(hExt) };
-  return createObj(shape.release(),true,pos,mass,materialFriction(mat),IT_Dynamic);
+  auto ret = createObj(shape.release(),true,pos,mass,materialFriction(mat),IT_Dynamic);
+  if(traceWorld!=0) {
+    auto o = PhysTrace::addObject(ret.obj,traceWorld);
+    PhysTrace::Rec(OG_PT_OBJ_ADD,traceWorld).u32(o.id).u8(OG_PT_OBJ_DYNAMIC).mat4(pos)
+      .vec3(b.bbox[0]).vec3(b.bbox[1]).u8(uint8_t(mat));
+    }
+  return ret;
   }
 
 DynamicWorld::Item DynamicWorld::createObj(btCollisionShape* shape, bool ownShape, const Tempest::Matrix4x4& m, float mass, float friction, ItemType type) {
@@ -908,7 +1058,12 @@ DynamicWorld::Item DynamicWorld::createObj(btCollisionShape* shape, bool ownShap
   }
 
 DynamicWorld::BulletBody* DynamicWorld::bulletObj(BulletCallback* cb) {
-  return bulletList->add(cb);
+  auto ret = bulletList->add(cb);
+  if(traceWorld!=0) {
+    auto o = PhysTrace::addObject(ret,traceWorld);
+    PhysTrace::Rec(OG_PT_OBJ_ADD,traceWorld).u32(o.id).u8(OG_PT_OBJ_BULLET);
+    }
+  return ret;
   }
 
 DynamicWorld::BBoxBody DynamicWorld::bboxObj(BBoxCallback* cb, const zenkit::AxisAlignedBoundingBox& bbox) {
@@ -957,6 +1112,7 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
 
   if(auto ptr = bboxList->rayTest(s,e)) {
     if(ptr->cb!=nullptr) {
+      PhysTrace::Callback cb(traceWorld,OG_PT_CB_BBOX_HIT);
       ptr->cb->onCollide(b);
       }
     }
@@ -966,8 +1122,10 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
   bool stopBullet = false;
   if(callback.matId != zenkit::MaterialGroup::NONE) {
     if(isSpell){
-      if(b.cb!=nullptr)
+      if(b.cb!=nullptr) {
+        PhysTrace::Callback cb(traceWorld,OG_PT_CB_BULLET_HIT_MATERIAL);
         b.cb->onCollide(callback.matId);
+        }
       stopBullet = true;
       } else {
       if(callback.matId==zenkit::MaterialGroup::METAL ||
@@ -989,24 +1147,31 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
           b.setDirection({dir.x(),dir.y(),dir.z()});
           b.addPathLen(l*a);
           b.addHit();
-          if(b.cb!=nullptr)
+          if(b.cb!=nullptr) {
+            PhysTrace::Callback cb(traceWorld,OG_PT_CB_BULLET_HIT_MATERIAL);
             b.cb->onCollide(callback.matId);
+            }
           }
         } else {
         float a = callback.m_closestHitFraction;
         b.move(pos + (to-pos)*a);
         b.addPathLen((to-pos).length()*a);
         b.addHit();
-        if(b.cb!=nullptr)
+        if(b.cb!=nullptr) {
+          PhysTrace::Callback cb(traceWorld,OG_PT_CB_BULLET_HIT_MATERIAL);
           b.cb->onCollide(callback.matId);
+          }
         stopBullet = true;
         }
       }
     } else {
     if(auto ptr = npcList->rayTest(pos,to,b.targetRange(),nullptr)) {
-      if(b.cb!=nullptr)
-        stopBullet |= b.cb->onCollide(*ptr->toNpc()); else
+      if(b.cb!=nullptr) {
+        PhysTrace::Callback cb(traceWorld,OG_PT_CB_BULLET_HIT_NPC);
+        stopBullet |= b.cb->onCollide(*ptr->toNpc());
+        } else {
         stopBullet  = true;
+        }
       }
     const float l = b.speed();
     auto        d = b.direction();
@@ -1018,18 +1183,27 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
     }
 
   if(stopBullet || b.hitCount()>3 || b.pathLength()>10000) {
-    if(b.cb!=nullptr)
+    if(b.cb!=nullptr) {
+      PhysTrace::Callback cb(traceWorld,OG_PT_CB_BULLET_STOP);
       b.cb->onStop();
+      }
     }
   }
 
 void DynamicWorld::tick(uint64_t dt) {
+  PhysTrace::Call call;
   npcList   ->tickAabbs();
   bulletList->tick(dt);
   world     ->tick(dt);
+  if(call.record())
+    PhysTrace::Rec(OG_PT_TICK,traceWorld).u64(dt).u64(call.ns());
   }
 
 void DynamicWorld::deleteObj(BulletBody* obj) {
+  if(traceWorld!=0) {
+    auto o = PhysTrace::removeObject(obj);
+    PhysTrace::Rec(OG_PT_OBJ_DELETE,o.world).u32(o.id);
+    }
   bulletList->del(obj);
   }
 
@@ -1144,12 +1318,21 @@ bool DynamicWorld::hasCollision(const NpcItem& it, CollisionTest& out) {
 DynamicWorld::NpcItem::~NpcItem() {
   if(owner==nullptr)
     return;
+  if(obj!=nullptr && owner->traceWorld!=0) {
+    auto o = PhysTrace::removeObject(obj);
+    PhysTrace::Rec(OG_PT_OBJ_DELETE,o.world).u32(o.id);
+    }
   owner->world->touchAabbs();
   if(!owner->npcList->del(obj))
     owner->world->removeCollisionObject(obj);
   }
 
 void DynamicWorld::NpcItem::setPosition(const Tempest::Vec3& pos) {
+  PhysTrace::Call call;
+  if(obj && call.record()) {
+    auto o = PhysTrace::object(obj);
+    PhysTrace::Rec(OG_PT_OBJ_SET,o.world).u32(o.id).u8(OG_PT_SET_POSITION).vec3(pos);
+    }
   if(obj) {
     implSetPosition(pos);
     owner->npcList->onMove(*obj);
@@ -1165,11 +1348,21 @@ void DynamicWorld::NpcItem::implSetPosition(const Tempest::Vec3& pos) {
 void DynamicWorld::NpcItem::setEnable(bool e) {
   if(obj==nullptr || obj->enable==e)
     return;
+  PhysTrace::Call call;
+  if(call.record()) {
+    auto o = PhysTrace::object(obj);
+    PhysTrace::Rec(OG_PT_OBJ_SET,o.world).u32(o.id).u8(OG_PT_SET_ENABLE).u8(e ? 1 : 0);
+    }
   obj->enable = e;
   owner->world->touchAabbs();
   }
 
 void DynamicWorld::NpcItem::setUserPointer(void *p) {
+  PhysTrace::Call call;
+  if(obj!=nullptr && call.record()) {
+    auto o = PhysTrace::object(obj);
+    PhysTrace::Rec(OG_PT_OBJ_SET,o.world).u32(o.id).u8(OG_PT_SET_PAYLOAD).u8(OG_PT_PAYLOAD_NPC).u32(PhysTrace::payload(p));
+    }
   obj->setUserPointer(p);
   }
 
@@ -1209,6 +1402,11 @@ const Tempest::Vec3& DynamicWorld::NpcItem::position() const {
   }
 
 void DynamicWorld::NpcItem::setRotation(float a) {
+  PhysTrace::Call call;
+  if(call.record()) {
+    auto o = PhysTrace::object(obj);
+    PhysTrace::Rec(OG_PT_OBJ_SET,o.world).u32(o.id).u8(OG_PT_SET_ROTATION).f32(a);
+    }
   obj->angle = float(a*M_PI)/180.f - float(M_PI_2);
   }
 
@@ -1248,13 +1446,40 @@ bool DynamicWorld::NpcItem::testMove(const Tempest::Vec3& to, CollisionTest& out
 bool DynamicWorld::NpcItem::testMove(const Tempest::Vec3& to, const Tempest::Vec3& pos0, CollisionTest& out) {
   if(!obj)
     return false;
+  PhysTrace::Call call;
+  const CollisionTest in = out;
   auto prev = obj->pos;
   auto code = implTryMove(to,pos0,out);
   implSetPosition(prev);
+  if(call.record()) {
+    auto o = PhysTrace::object(obj);
+    PhysTrace::Rec r(OG_PT_QUERY,o.world);
+    r.u8(OG_PT_Q_TEST_MOVE).u64(call.ns()).u32(o.id).vec3(to).vec3(pos0);
+    traceColl(r,in);
+    r.u8(code==MoveCode::MC_OK ? 1 : 0);
+    traceColl(r,out);
+    }
   return code==MoveCode::MC_OK;
   }
 
 DynamicWorld::MoveCode DynamicWorld::NpcItem::tryMove(const Tempest::Vec3& to, CollisionTest& out) {
+  PhysTrace::Call call;
+  if(!call.record() || obj==nullptr)
+    return untracedTryMove(to,out);
+  const CollisionTest in     = out;
+  const Tempest::Vec3 before = obj->pos;
+  auto code = untracedTryMove(to,out);
+  auto o    = PhysTrace::object(obj);
+  PhysTrace::Rec r(OG_PT_QUERY,o.world);
+  r.u8(OG_PT_Q_TRY_MOVE).u64(call.ns()).u32(o.id).vec3(to).vec3(before);
+  traceColl(r,in);
+  r.u8(uint8_t(code));
+  traceColl(r,out);
+  r.vec3(obj->pos);
+  return code;
+  }
+
+DynamicWorld::MoveCode DynamicWorld::NpcItem::untracedTryMove(const Tempest::Vec3& to, CollisionTest& out) {
   // 2-santimeters
   static const float eps = 2;
 
@@ -1339,11 +1564,23 @@ DynamicWorld::MoveCode DynamicWorld::NpcItem::implTryMove(const Tempest::Vec3& t
 bool DynamicWorld::NpcItem::hasCollision() const {
   if(!obj)
     return false;
+  PhysTrace::Call call;
   CollisionTest info;
-  return owner->hasCollision(*this,info);
+  const bool ret = owner->hasCollision(*this,info);
+  if(call.record()) {
+    auto o = PhysTrace::object(obj);
+    PhysTrace::Rec(OG_PT_QUERY,o.world).u8(OG_PT_Q_HAS_COLLISION).u64(call.ns()).u32(o.id).u8(ret ? 1 : 0);
+    }
+  return ret;
   }
 
 DynamicWorld::Item::~Item() {
+  // The owner may be gone already (vobs can outlive their DynamicWorld): only the trace's
+  // own map is consulted.
+  if(obj!=nullptr && PhysTrace::active()) {
+    auto o = PhysTrace::removeObject(obj);
+    PhysTrace::Rec(OG_PT_OBJ_DELETE,o.world).u32(o.id);
+    }
   delete obj;
   delete shp;
   }
@@ -1355,6 +1592,11 @@ void DynamicWorld::Item::setObjMatrix(const Tempest::Matrix4x4 &m) {
     trans.getOrigin()*=0.01f;
     if(obj->getWorldTransform()==trans)
       return;
+    PhysTrace::Call call;
+    if(call.record()) {
+      auto o = PhysTrace::object(obj);
+      PhysTrace::Rec(OG_PT_OBJ_SET,o.world).u32(o.id).u8(OG_PT_SET_MATRIX).mat4(m);
+      }
     obj->setWorldTransform(trans);
     //owner->world->touchAabbs(); // TOO SLOW!
     owner->world->updateSingleAabb(obj);
@@ -1362,18 +1604,33 @@ void DynamicWorld::Item::setObjMatrix(const Tempest::Matrix4x4 &m) {
   }
 
 void DynamicWorld::Item::setItem(::Item* it) {
+  PhysTrace::Call call;
+  if(obj!=nullptr && call.record()) {
+    auto o = PhysTrace::object(obj);
+    PhysTrace::Rec(OG_PT_OBJ_SET,o.world).u32(o.id).u8(OG_PT_SET_PAYLOAD).u8(OG_PT_PAYLOAD_ITEM).u32(PhysTrace::payload(it));
+    }
   assert(obj->getUserIndex()==DynamicWorld::C_Item);
   obj->setUserPointer(it);
   obj->setUserIndex2(P_Item);
   }
 
 void DynamicWorld::Item::setInteractive(Interactive* it) {
+  PhysTrace::Call call;
+  if(obj!=nullptr && call.record()) {
+    auto o = PhysTrace::object(obj);
+    PhysTrace::Rec(OG_PT_OBJ_SET,o.world).u32(o.id).u8(OG_PT_SET_PAYLOAD).u8(OG_PT_PAYLOAD_INTERACTIVE).u32(PhysTrace::payload(it));
+    }
   assert(obj->getUserIndex()==DynamicWorld::C_Object);
   obj->setUserPointer(it);
   obj->setUserIndex2(P_Interactive);
   }
 
 void DynamicWorld::Item::setPayloadPtr(void* ptr) {
+  PhysTrace::Call call;
+  if(obj!=nullptr && call.record()) {
+    auto o = PhysTrace::object(obj);
+    PhysTrace::Rec(OG_PT_OBJ_SET,o.world).u32(o.id).u8(OG_PT_SET_PAYLOAD).u8(OG_PT_PAYLOAD_EDITOR).u32(PhysTrace::payload(ptr));
+    }
   if(obj==nullptr)
     return;
   obj->setUserPointer(ptr);
@@ -1392,24 +1649,49 @@ DynamicWorld::BulletBody::BulletBody(DynamicWorld::BulletBody&& other)
   }
 
 void DynamicWorld::BulletBody::setSpellId(int s) {
+  PhysTrace::Call call;
+  if(call.record()) {
+    auto o = PhysTrace::object(this);
+    PhysTrace::Rec(OG_PT_OBJ_SET,o.world).u32(o.id).u8(OG_PT_SET_BULLET_SPELL).i32(s);
+    }
   spl = s;
   }
 
 void DynamicWorld::BulletBody::setTargetRange(float t) {
+  PhysTrace::Call call;
+  if(call.record()) {
+    auto o = PhysTrace::object(this);
+    PhysTrace::Rec(OG_PT_OBJ_SET,o.world).u32(o.id).u8(OG_PT_SET_BULLET_RANGE).f32(t);
+    }
   tgRange = t;
   }
 
 void DynamicWorld::BulletBody::move(const Tempest::Vec3& to) {
+  PhysTrace::Call call;
+  if(call.record()) {
+    auto o = PhysTrace::object(this);
+    PhysTrace::Rec(OG_PT_OBJ_SET,o.world).u32(o.id).u8(OG_PT_SET_BULLET_MOVE).vec3(to);
+    }
   lastPos = pos;
   pos     = to;
   }
 
 void DynamicWorld::BulletBody::setPosition(const Tempest::Vec3& p) {
+  PhysTrace::Call call;
+  if(call.record()) {
+    auto o = PhysTrace::object(this);
+    PhysTrace::Rec(OG_PT_OBJ_SET,o.world).u32(o.id).u8(OG_PT_SET_BULLET_POSITION).vec3(p);
+    }
   lastPos = p;
   pos     = p;
   }
 
 void DynamicWorld::BulletBody::setDirection(const Tempest::Vec3& d) {
+  PhysTrace::Call call;
+  if(call.record()) {
+    auto o = PhysTrace::object(this);
+    PhysTrace::Rec(OG_PT_OBJ_SET,o.world).u32(o.id).u8(OG_PT_SET_BULLET_DIRECTION).vec3(d);
+    }
   dir  = d;
   dirL = d.length();
   }
@@ -1455,6 +1737,11 @@ DynamicWorld::BBoxBody::BBoxBody(DynamicWorld* ow, BBoxCallback* cb, const zenki
   obj->setCollisionFlags(btCollisionObject::CF_NO_CONTACT_RESPONSE);
 
   owner->bboxList->add(this);
+  if(owner->traceWorld!=0) {
+    auto o = PhysTrace::addObject(obj,owner->traceWorld);
+    PhysTrace::Rec(OG_PT_OBJ_ADD,o.world).u32(o.id).u8(OG_PT_OBJ_BBOX)
+      .vec3(Tempest::Vec3(bbox.min.x,bbox.min.y,bbox.min.z)).vec3(Tempest::Vec3(bbox.max.x,bbox.max.y,bbox.max.z));
+    }
 }
 
 DynamicWorld::BBoxBody::BBoxBody(DynamicWorld* ow, BBoxCallback* cb, const Tempest::Vec3& p, float R)
@@ -1473,6 +1760,10 @@ DynamicWorld::BBoxBody::BBoxBody(DynamicWorld* ow, BBoxCallback* cb, const Tempe
   obj->setCollisionFlags(btCollisionObject::CF_NO_CONTACT_RESPONSE);
 
   owner->bboxList->add(this);
+  if(owner->traceWorld!=0) {
+    auto o = PhysTrace::addObject(obj,owner->traceWorld);
+    PhysTrace::Rec(OG_PT_OBJ_ADD,o.world).u32(o.id).u8(OG_PT_OBJ_CAPSULE).vec3(p).f32(R);
+    }
   }
 
 DynamicWorld::BBoxBody::BBoxBody(BBoxBody&& other)
@@ -1510,6 +1801,10 @@ DynamicWorld::BBoxBody& DynamicWorld::BBoxBody::operator=(BBoxBody&& other) {
 DynamicWorld::BBoxBody::~BBoxBody() {
   if(owner==nullptr)
     return;
+  if(obj!=nullptr && PhysTrace::active()) {
+    auto o = PhysTrace::removeObject(obj);
+    PhysTrace::Rec(OG_PT_OBJ_DELETE,o.world).u32(o.id);
+    }
   owner->bboxList->del(this);
   delete obj;
   delete shape;
