@@ -12,6 +12,8 @@ class gtime final {
     gtime(int64_t day,int64_t hour,int64_t min):time(day*dayMilis+hour*hourMilis+min*minMilis){}
 
     int64_t toInt() const { return time; }
+    // opengothic-rs (task 5.11): the og-sim clock hands raw milliseconds back.
+    static gtime fromInt(int64_t t) { return gtime(t); }
     void    addMilis(uint64_t t){ time+=t; }
 
     int64_t day()       const { return time/dayMilis; }

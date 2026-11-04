@@ -55,6 +55,8 @@ class GameSession final {
 
     gtime        time() const { return  wrldTime; }
     void         setTime(gtime t);
+    // World::setDayTime(h, min): sets `t`, which it computed (og-sim checks the math, 5.11).
+    void         setDayTime(int32_t h, int32_t min, gtime t);
     void         tick(uint64_t dt);
     uint64_t     tickCount() const { return ticks; }
 
@@ -105,6 +107,10 @@ class GameSession final {
 
     ChWorld                        chWorld;
     bool                           exitSessionFlg=false;
+
+    // og-sim delegation of the clock (task 5.11): hands the clock after `op` to the
+    // table and takes its result in use mode; returns the dt to tick with.
+    uint64_t                       ogSimTime(uint32_t op, int64_t a, int64_t b, float f, uint64_t dt);
 
     static const uint64_t          multTime;
     static const uint64_t          divTime;

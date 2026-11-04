@@ -1726,9 +1726,12 @@ void GameScript::wld_exchangeguildattitudes(std::string_view name) {
     }
   }
 
-bool GameScript::wld_istime(int hour0, int min0, int hour1, int min1) {
+// Included here, not at the top: lane B's external catalog (og-daedalus) pins the
+// bindExternal line numbers above.
+#include "capi/ogsim.h"
+
+static bool wldIsTime(gtime now, int hour0, int min0, int hour1, int min1) {
   gtime begin{hour0,min0}, end{hour1,min1};
-  gtime now = owner.time();
   now = gtime(0,now.hour(),now.minute());
 
   if(begin<=end && begin<=now && now<end)
@@ -1737,6 +1740,13 @@ bool GameScript::wld_istime(int hour0, int min0, int hour1, int min1) {
     return true;
   else
     return 0;
+  }
+
+bool GameScript::wld_istime(int hour0, int min0, int hour1, int min1) {
+  const bool ret = wldIsTime(owner.time(),hour0,min0,hour1,min1);
+  if(OgSim::on(OG_SIM_MOD_TIME))
+    return OgSim::table().is_time(OgSim::table().user,hour0,min0,hour1,min1,ret ? 1 : 0)!=0;
+  return ret;
   }
 
 bool GameScript::wld_isfpavailable(std::shared_ptr<zenkit::INpc> self, std::string_view name) {

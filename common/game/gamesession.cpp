@@ -1,4 +1,5 @@
 #include "gamesession.h"
+#include "capi/ogsim.h"
 #include "savegameheader.h"
 
 #include <Tempest/Log>
@@ -72,7 +73,8 @@ GameSession::GameSession(std::string file) {
 
   Gothic::inst().setLoadingProgress(0);
   setupSettings();
-  setTime(gtime(8,0));
+  wrldTime = gtime(8,0);
+  ogSimTime(OG_SIM_TIME_NEW_GAME,0,0,0,0);
 
   vm.reset(new GameScript(*this));
   initPerceptions();
@@ -114,6 +116,7 @@ GameSession::GameSession(std::string file) {
   cam->reset(wrld->player());
   Gothic::inst().setLoadingProgress(96);
   ticks = 1;
+  ogSimTime(OG_SIM_TIME_STARTED,0,0,0,0);
   // wrld->setDayTime(8,0);
   }
 
@@ -139,6 +142,7 @@ GameSession::GameSession(Serialize &fin) {
   std::string    wname;
   fin.setEntry("game/session");
   fin.read(ticks,wrldTime,wrldTimePart,wname);
+  ogSimTime(OG_SIM_TIME_LOADED,0,0,0,0);
 
   cam.reset(new Camera());
   vm.reset(new GameScript(*this));
@@ -311,10 +315,32 @@ void GameSession::updateListenerPos(const Camera::ListenerPos& lpos) {
 
 void GameSession::setTime(gtime t) {
   wrldTime = t;
+  ogSimTime(OG_SIM_TIME_SET,t.toInt(),0,0,0);
+  }
+
+void GameSession::setDayTime(int32_t h, int32_t min, gtime t) {
+  wrldTime = t;
+  ogSimTime(OG_SIM_TIME_DAY_TIME,h,min,0,0);
+  }
+
+uint64_t GameSession::ogSimTime(uint32_t op, int64_t a, int64_t b, float f, uint64_t dt) {
+  if(!OgSim::on(OG_SIM_MOD_TIME))
+    return dt;
+  og_sim_clock c = {ticks,wrldTime.toInt(),wrldTimePart,timeMul,timeMulFract};
+  const uint64_t ret = OgSim::table().time(OgSim::table().user,op,a,b,f,dt,&c);
+  if(OgSim::mode(OG_SIM_MOD_TIME)==OG_SIM_USE) {
+    ticks        = c.ticks;
+    wrldTime     = gtime::fromInt(c.world_time);
+    wrldTimePart = c.world_time_part;
+    timeMul      = c.time_mul;
+    timeMulFract = c.time_mul_fract;
+    }
+  return ret;
   }
 
 void GameSession::tick(uint64_t dt) {
   wrld->scaleTime(dt);
+  const uint64_t scaled = dt;
 
   // apply ztime multiplyer
   dt = dt*timeMul + timeMulFract;
@@ -326,6 +352,7 @@ void GameSession::tick(uint64_t dt) {
   uint64_t add = dt*multTime + wrldTimePart;
   wrldTimePart = add%divTime;
   wrldTime.addMilis(add/divTime);
+  dt = ogSimTime(OG_SIM_TIME_TICK,int64_t(scaled),0,0,dt);
 
   vm->tick(dt);
   wrld->tick(dt);
@@ -367,6 +394,7 @@ void GameSession::tick(uint64_t dt) {
 
 void GameSession::setTimeMultiplyer(float t) {
   timeMul = uint64_t(t*1000);
+  ogSimTime(OG_SIM_TIME_MULTIPLIER,0,0,t,0);
   }
 
 auto GameSession::implChangeWorld(std::unique_ptr<GameSession>&& game,

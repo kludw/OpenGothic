@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "game/serialize.h"
+#include "capi/ogsim.h"
 
 namespace {
 
@@ -123,10 +124,17 @@ uint64_t OgRng::hash(uint64_t h, const void* data, uint64_t size) {
   }
 
 void OgRng::seed(uint64_t seed) {
+  {
   Locked l;
   seedLocked(l,seed,"host");
   }
+  if(OgSim::on(OG_SIM_MOD_RNG))
+    OgSim::table().rng_seed(OgSim::table().user,seed);
+  }
 
+// og-sim (task 5.11): the C++ draw always happens, so the C++ state stays comparable.
+// The table is called under the lock, so C++ and Rust draws pair up in the same order
+// when several threads draw (the table never calls back into OgRng).
 uint32_t OgRng::next(Stream s) {
   Locked l;
   ensureSeeded(l);
@@ -135,6 +143,8 @@ uint32_t OgRng::next(Stream s) {
   const uint32_t v  = uint32_t(ss.engine());
   ss.info.draws++;
   ss.info.digest = hash(ss.info.digest,&v,sizeof(v));
+  if(OgSim::on(OG_SIM_MOD_RNG))
+    return OgSim::table().rng_next(OgSim::table().user,s,v);
   return v;
   }
 
@@ -146,10 +156,22 @@ uint32_t OgRng::keyed(Stream s, uint64_t key) {
   const uint32_t v  = uint32_t(splitmix64(ss.seed ^ splitmix64(key)) >> 32);
   ss.info.keyedDraws++;
   ss.info.keyedSum += v;
+  if(OgSim::on(OG_SIM_MOD_RNG))
+    return OgSim::table().rng_keyed(OgSim::table().user,s,key,v);
   return v;
   }
 
 OgRng::Info OgRng::info(Stream s) {
+  if(OgSim::mode(OG_SIM_MOD_RNG)==OG_SIM_USE) {
+    og_sim_rng_counters c = {};
+    Info ret;
+    OgSim::table().rng_info(OgSim::table().user,s,&c,&ret.stateHash);
+    ret.draws      = c.draws;
+    ret.keyedDraws = c.keyed_draws;
+    ret.digest     = c.digest;
+    ret.keyedSum   = c.keyed_sum;
+    return ret;
+    }
   Locked l;
   ensureSeeded(l);
   auto& st = l.st;
@@ -162,6 +184,8 @@ const char* OgRng::name(Stream s) {
   return s<Count ? Names[s] : "?";
   }
 
+// In og-sim USE mode this still writes the C++ streams: every draw where Rust differed
+// was already counted as a mismatch (and is in the trace), so a save can't hide one.
 void OgRng::save(Serialize& fout) {
   Locked l;
   ensureSeeded(l);
@@ -193,6 +217,16 @@ void OgRng::load(Serialize& fin) {
     in >> s.engine;
     if(in.fail())
       throw std::runtime_error(std::string("ogrng: unreadable generator state for stream ")+Names[i]);
+    }
+
+  if(OgSim::on(OG_SIM_MOD_RNG)) {
+    for(uint32_t i=0; i<Count; ++i) {
+      auto& s = loaded[i];
+      const og_sim_rng_counters c = {s.info.draws,s.info.keyedDraws,s.info.digest,s.info.keyedSum};
+      const auto text = engineText(s.engine);
+      if(OgSim::table().rng_load(OgSim::table().user,i,s.seed,&c,text.c_str())!=0)
+        throw std::runtime_error(std::string("ogrng: og-sim refused the saved state of stream ")+Names[i]);
+      }
     }
 
   Locked l;

@@ -395,9 +395,9 @@ void World::setDayTime(int32_t h, int32_t min) {
   gtime next    = gtime(h,min);
 
   if(dayTime<=next){
-    game.setTime(gtime(day,h,min));
+    game.setDayTime(h,min,gtime(day,h,min));
     } else {
-    game.setTime(gtime(day+1,h,min));
+    game.setDayTime(h,min,gtime(day+1,h,min));
     }
   wobj.resetPositionToTA();
   }
