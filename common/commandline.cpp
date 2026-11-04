@@ -172,6 +172,13 @@ CommandLine::CommandLine(int argc, const char** argv) {
         throw std::runtime_error("--script-trace needs a path");
       scrTrace = argv[i];
       }
+    else if(arg=="--waynet-dump" || arg=="--waynet-queries") {
+      // opengothic-rs (task 5.12): see common/capi/ogwaynet.h
+      ++i;
+      if(i>=argc)
+        throw std::runtime_error(std::string(arg)+" needs a path");
+      (arg=="--waynet-dump" ? wayDump : wayQueries) = argv[i];
+      }
     else {
       Log::i("unrecognized commandline option: \"", arg, "\"");
       }

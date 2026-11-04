@@ -2,7 +2,9 @@
 
 #include <Tempest/Log>
 
+#include <algorithm>
 #include <cstdint>
+#include <vector>
 
 #include "game/gametime.h"
 
@@ -51,6 +53,15 @@ extern "C" int64_t og_sim_test_gtime(uint32_t op, int64_t a, int64_t b, int64_t 
       }
     }
   return INT64_MIN;
+  }
+
+extern "C" void og_sim_test_sort(const float* keys, uint32_t n, uint32_t* order) {
+  std::vector<const float*> p(n);
+  for(uint32_t i=0; i<n; ++i)
+    p[i] = keys + i;
+  std::sort(p.begin(), p.end(), [](const float* a, const float* b){ return *a < *b; });
+  for(uint32_t i=0; i<n; ++i)
+    order[i] = uint32_t(p[i] - keys);
   }
 
 namespace OgSim {

@@ -21,6 +21,8 @@
 #include "gothic.h"
 #include "focus.h"
 #include "resources.h"
+#include "commandline.h"
+#include "capi/ogwaynet.h"
 
 const char* materialTag(ItemMaterial src) {
   switch(src) {
@@ -115,6 +117,9 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
       wobj.addRoot(vob,startup);
 
     wmatrix->buildIndex();
+    // opengothic-rs (task 5.12): see capi/ogwaynet.h
+    if(!CommandLine::inst().waynetDump().empty())
+      OgWaynetDump::write(*this, *wmatrix, CommandLine::inst().waynetDump(), CommandLine::inst().waynetQueries());
     loadProgress(100);
     }
   catch(...) {

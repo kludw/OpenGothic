@@ -52,12 +52,16 @@ class CommandLine {
     std::string_view    physicsTrace()     const { return physTrace;  }
     // opengothic-rs (task 4.13): `--script-trace <path>`, empty without the flag.
     std::string_view    scriptTrace()      const { return scrTrace;   }
+    // opengothic-rs (task 5.12): `--waynet-dump <path>` / `--waynet-queries <path>`.
+    std::string_view    waynetDump()       const { return wayDump;    }
+    std::string_view    waynetQueries()    const { return wayQueries; }
 
     std::string         wrldDef;
 
   private:
     std::string         physTrace;
     std::string         scrTrace;
+    std::string         wayDump, wayQueries;
 
     bool                validateGothicPath() const;
 

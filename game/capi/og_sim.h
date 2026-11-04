@@ -96,6 +96,11 @@ int32_t og_sim_set(const og_sim_vtable* vtable, const uint8_t* modes);
  * Unknown op: INT64_MIN. */
 int64_t og_sim_test_gtime(uint32_t op, int64_t a, int64_t b, int64_t c);
 
+/* Test seam for og_sim::cxx::sort (task 5.12): std::sort of n `const float*` pointers into
+ * `keys` with `*a < *b`, the instantiation WayMatrix's sorts use (pointer elements, a
+ * lambda comparator). Writes the sorted order as indices into `keys` to `order`. */
+void og_sim_test_sort(const float* keys, uint32_t n, uint32_t* order);
+
 #ifdef __cplusplus
 }
 #endif
