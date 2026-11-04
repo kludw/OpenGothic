@@ -55,6 +55,8 @@ class CommandLine {
     // opengothic-rs (task 5.12): `--waynet-dump <path>` / `--waynet-queries <path>`.
     std::string_view    waynetDump()       const { return wayDump;    }
     std::string_view    waynetQueries()    const { return wayQueries; }
+    // opengothic-rs (task 4.14): `--script-dump <path>`, empty without the flag.
+    std::string_view    scriptDump()       const { return scrDump;    }
 
     std::string         wrldDef;
 
@@ -62,6 +64,7 @@ class CommandLine {
     std::string         physTrace;
     std::string         scrTrace;
     std::string         wayDump, wayQueries;
+    std::string         scrDump;
 
     bool                validateGothicPath() const;
 

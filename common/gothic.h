@@ -201,6 +201,8 @@ class Gothic final {
     static std::u16string                 nestedPath(const std::initializer_list<const char16_t*> &name, Tempest::Dir::FileType type);
     std::unique_ptr<OgVm>   createPhoenixVm(std::string_view datFile, const ScriptLang lang = ScriptLang::NONE);
     zenkit::DaedalusScript                loadScript(std::string_view datFile, const ScriptLang lang);
+    std::vector<uint8_t>                  loadScriptBytes(std::string_view datFile, const ScriptLang lang);
+    static zenkit::DaedalusScript         parseScript(const std::vector<uint8_t>& dat);
     void                                  setupCommonScriptClasses(zenkit::DaedalusScript &sc);
     void                                  setupVmCommonApi(OgVm &vm);
 

@@ -3,6 +3,7 @@
 #include <zenkit/DaedalusVm.hh>
 
 #include "scripttrace.h"
+#include "../../game/capi/og_script.h"
 
 #include <cstdint>
 #include <functional>
@@ -23,13 +24,18 @@
 // each entry pops its arguments off the ZenKit stack and pushes the result exactly like the
 // callback ZenKit itself stores, so a call coming from another VM can run OpenGothic's callback.
 // With `--script-trace` (task 4.13) every entry and external also goes to ScriptTrace.
+// With a backend registered through game/capi/og_script.h (task 4.14) that takes this VM, the
+// entries run on the backend (the Rust VM) instead: ZenKit still owns the symbols' C++ side,
+// binds instances and checks them, and serves the externals and member accesses the backend
+// makes through the seam.
 class OgVm final {
   public:
     // Runs one external against the VM's ZenKit stack: pops the arguments, calls the engine, pushes the result.
     using External = std::function<void(OgVm&)>;
 
     // `name` is the DAT file (GOTHIC.DAT, MENU.DAT, ...): it names the VM in the script trace.
-    OgVm(zenkit::DaedalusScript&& script, uint8_t flags, std::string name);
+    // `dat` = the bytes `script` was parsed from, offered to the og_script backend (copied).
+    OgVm(zenkit::DaedalusScript&& script, uint8_t flags, std::string name, std::span<const uint8_t> dat = {});
     OgVm(OgVm&&) noexcept;
     OgVm& operator=(OgVm&&) noexcept;
     ~OgVm();
@@ -41,22 +47,33 @@ class OgVm final {
     const zenkit::DaedalusVm& zenkit() const { return *zk; }
 
     std::string_view name() const { return vmName; }
+    // The og_script backend runs this VM's scripts.
+    bool onBackend() const { return rust!=nullptr; }
+    // The og_script bridge (og_script_host); defined in ogvm.cpp.
+    class Rust;
+
+    // opengothic-rs (task 4.14): `--script-dump <path>`: after every engine init_instance, the
+    // instance's members as JSON Lines, read through ZenKit's symbols (the same objects for
+    // both backends). Throws when the file can't be written or a dump is already open.
+    static void openDump(const std::string& path);
 
     template<typename R = zenkit::IgnoreReturnValue, typename S, typename... P>
     R call_function(S&& sym, P... args) {
-      if(!ScriptTrace::active())
+      if(!ScriptTrace::active() && rust==nullptr)
         return zk->template call_function<R, P...>(std::forward<S>(sym), args...);
       // ZenKit's by-name overload only looks the symbol up; calling by symbol is the same call.
       auto* s = symbolOf(sym);
+      if(!ScriptTrace::active())
+        return callOn<R>(s, args...);
       ScriptTrace::Entry entry(*zk, vmName, "call", s, ScriptTrace::values(*zk, args...));
-      return traced(entry, [&]() -> R { return zk->template call_function<R, P...>(s, args...); });
+      return traced(entry, [&]() -> R { return callOn<R>(s, args...); });
       }
 
     // The init/allocate overloads that create the instance do what ZenKit's do (make_shared,
     // then the overload taking it), so the trace numbers the instance before its script runs.
     template<typename T, typename S>
     std::shared_ptr<T> init_instance(S&& sym) {
-      if(!ScriptTrace::active())
+      if(!ScriptTrace::active() && rust==nullptr && !dumping())
         return zk->template init_instance<T>(std::forward<S>(sym));
       auto inst = std::make_shared<T>();
       init_instance<T>(inst, std::forward<S>(sym));
@@ -64,24 +81,36 @@ class OgVm final {
       }
     template<typename T, typename S>
     void init_instance(std::shared_ptr<T> const& instance, S&& sym) {
-      if(!ScriptTrace::active())
+      if(!ScriptTrace::active() && rust==nullptr && !dumping())
         return zk->template init_instance<T>(instance, std::forward<S>(sym));
       auto* s = symbolOf(sym);
-      ScriptTrace::created(*zk, instance);
-      ScriptTrace::Entry entry(*zk, vmName, "init", s, "[]");
-      traced(entry, [&]() { zk->template init_instance<T>(instance, mutableSymbol(s)); return instance; });
+      if(!ScriptTrace::active()) {
+        initOn<T>(instance, s);
+        } else {
+        ScriptTrace::created(*zk, instance);
+        ScriptTrace::Entry entry(*zk, vmName, "init", s, "[]");
+        traced(entry, [&]() { initOn<T>(instance, s); return instance; });
+        }
+      dump(*instance, s);
       }
     std::shared_ptr<zenkit::DaedalusInstance> init_opaque_instance(zenkit::DaedalusSymbol* sym) {
-      if(!ScriptTrace::active())
+      if(!ScriptTrace::active() && rust==nullptr && !dumping())
         return zk->init_opaque_instance(sym);
-      // ZenKit makes the opaque instance inside: it is numbered when first seen.
-      ScriptTrace::Entry entry(*zk, vmName, "opaque", sym, "[]");
-      return traced(entry, [&]() { return zk->init_opaque_instance(sym); });
+      std::shared_ptr<zenkit::DaedalusInstance> inst;
+      if(!ScriptTrace::active()) {
+        inst = opaqueOn(sym);
+        } else {
+        // ZenKit makes the opaque instance inside: it is numbered when first seen.
+        ScriptTrace::Entry entry(*zk, vmName, "opaque", sym, "[]");
+        inst = traced(entry, [&]() { return opaqueOn(sym); });
+        }
+      dump(*inst, sym);
+      return inst;
       }
 
     template<typename T, typename S>
     std::shared_ptr<T> allocate_instance(S&& sym) {
-      if(!ScriptTrace::active())
+      if(!ScriptTrace::active() && rust==nullptr)
         return zk->template allocate_instance<T>(std::forward<S>(sym));
       auto inst = std::make_shared<T>();
       allocate_instance<T>(inst, std::forward<S>(sym));
@@ -89,13 +118,23 @@ class OgVm final {
       }
     template<typename T, typename S>
     void allocate_instance(std::shared_ptr<T> const& instance, S&& sym) {
-      if(!ScriptTrace::active())
+      if(!ScriptTrace::active() && rust==nullptr)
         return zk->template allocate_instance<T>(instance, std::forward<S>(sym));
-      // Runs no script code, but it binds the instance to its symbol: a replay must do it too.
       auto* s = symbolOf(sym);
+      auto bind = [&]() {
+        zk->template allocate_instance<T>(instance, mutableSymbol(s));
+        if(rust!=nullptr)
+          backendBind(instance, s);
+        return instance;
+        };
+      if(!ScriptTrace::active()) {
+        bind();
+        return;
+        }
+      // Runs no script code, but it binds the instance to its symbol: a replay must do it too.
       ScriptTrace::created(*zk, instance);
       ScriptTrace::Entry entry(*zk, vmName, "allocate", s, "[]");
-      traced(entry, [&]() { zk->template allocate_instance<T>(instance, mutableSymbol(s)); return instance; });
+      traced(entry, bind);
       }
 
     const std::vector<zenkit::DaedalusSymbol>& symbols() const noexcept { return zk->symbols(); }
@@ -126,6 +165,9 @@ class OgVm final {
     template<typename F>
     void register_default_external(F const& cb) {
       static_assert(std::is_invocable_v<F const&, std::string_view>, "the engine registers a by-name default external");
+      defaultExternal = cb;
+      if(rust!=nullptr)
+        backendBindDefault();
       if(!ScriptTrace::active())
         return zk->register_default_external(std::function<void(std::string_view)>(cb));
       zk->register_default_external(std::function<void(std::string_view)>([name = vmName, cb](std::string_view ext) {
@@ -138,6 +180,8 @@ class OgVm final {
       }
     template<typename F>
     void register_exception_handler(F const& cb) {
+      if(rust!=nullptr)
+        backendLenient();
       if(!ScriptTrace::active())
         return zk->register_exception_handler(cb);
       zk->register_exception_handler([name = vmName, cb](zenkit::DaedalusVm& vm, zenkit::DaedalusScriptError const& err,
@@ -155,8 +199,11 @@ class OgVm final {
     void register_external(std::string_view name, std::function<R(P...)> const& callback) {
       const std::function<R(P...)> cb = ScriptTrace::active() ? tracedExternal(name, callback) : callback;
       zk->register_external(name, cb);
-      if(auto* sym = zk->find_symbol_by_name(name))
+      if(auto* sym = zk->find_symbol_by_name(name)) {
         externals[sym->name()] = Zk::template stackCall<R, P...>(cb);
+        if(rust!=nullptr)
+          backendBindExternal(sym);
+        }
       }
     template<typename T>
     void register_external(std::string_view name, T const& callback) {
@@ -167,6 +214,96 @@ class OgVm final {
     const External* external(std::string_view name) const;
 
   private:
+
+    static bool dumping();
+    void dump(const zenkit::DaedalusInstance& inst, const zenkit::DaedalusSymbol* sym);
+
+    // The backend half of the entries; the ZenKit half when no backend took the VM.
+    template<typename R, typename... P>
+    R callOn(const zenkit::DaedalusSymbol* s, P... args) {
+      if(rust==nullptr)
+        return zk->template call_function<R, P...>(s, args...);
+      if(s==nullptr)
+        throw zenkit::DaedalusVmException {"Cannot call function: not found"};
+      std::vector<og_script_value> values;
+      (values.push_back(toValue(args)), ...);
+      og_script_value ret = {};
+      backendCall(s, values, retKind<R>(), ret);
+      if constexpr (std::same_as<R, zenkit::IgnoreReturnValue>) {
+        return R {};
+        }
+      else if constexpr (std::same_as<R, void>) {
+        return;
+        }
+      else if constexpr (std::same_as<R, int32_t>) {
+        return ret.i;
+        }
+      else if constexpr (std::same_as<R, float>) {
+        return ret.f;
+        }
+      else if constexpr (std::same_as<R, std::string>) {
+        return std::string(ret.str, ret.len);
+        }
+      else {
+        static_assert(ScriptTrace::unsupported<R>, "og_script: no backend return for this type");
+        }
+      }
+    template<typename T>
+    void initOn(std::shared_ptr<T> const& instance, const zenkit::DaedalusSymbol* s) {
+      if(rust==nullptr)
+        return zk->template init_instance<T>(instance, mutableSymbol(s));
+      // ZenKit's own bookkeeping and checks (symbol, class registered to T), no code.
+      zk->template allocate_instance<T>(instance, mutableSymbol(s));
+      backendInit(instance, s);
+      }
+    std::shared_ptr<zenkit::DaedalusInstance> opaqueOn(zenkit::DaedalusSymbol* sym);
+
+    template<typename R>
+    static constexpr uint32_t retKind() {
+      if constexpr (std::same_as<R, zenkit::IgnoreReturnValue>) return OG_SCRIPT_IGNORE;
+      else if constexpr (std::same_as<R, void>) return OG_SCRIPT_VOID;
+      else if constexpr (std::same_as<R, int32_t>) return OG_SCRIPT_INT;
+      else if constexpr (std::same_as<R, float>) return OG_SCRIPT_FLOAT;
+      else if constexpr (std::same_as<R, std::string>) return OG_SCRIPT_STRING;
+      else return OG_SCRIPT_VOID;
+      }
+    // Strings point into the argument (alive for the call); instances are pinned.
+    template<typename T>
+    og_script_value toValue(const T& v) {
+      using U = std::remove_cvref_t<T>;
+      og_script_value out = {};
+      if constexpr (std::same_as<U, bool> || std::integral<U>) {
+        out.kind = OG_SCRIPT_INT;
+        out.i    = int32_t(v);
+        }
+      else if constexpr (std::floating_point<U>) {
+        out.kind = OG_SCRIPT_FLOAT;
+        out.f    = float(v);
+        }
+      else if constexpr (std::convertible_to<const U&, std::string_view>) {
+        std::string_view str(v);
+        out.kind = OG_SCRIPT_STRING;
+        out.str  = str.data();
+        out.len  = str.size();
+        }
+      else if constexpr (zenkit::DaedalusInstancePointer<U>) {
+        out.kind = OG_SCRIPT_INSTANCE;
+        out.inst = backendPin(std::static_pointer_cast<zenkit::DaedalusInstance>(v));
+        }
+      else {
+        static_assert(ScriptTrace::unsupported<U>, "og_script: no backend value for this argument type");
+        }
+      return out;
+      }
+
+    og_script_inst backendPin(std::shared_ptr<zenkit::DaedalusInstance> const& inst);
+    void backendCall(const zenkit::DaedalusSymbol* s, std::vector<og_script_value>& args, uint32_t retKind, og_script_value& ret);
+    void backendInit(std::shared_ptr<zenkit::DaedalusInstance> const& inst, const zenkit::DaedalusSymbol* s);
+    void backendBind(std::shared_ptr<zenkit::DaedalusInstance> const& inst, const zenkit::DaedalusSymbol* s);
+    void backendBindExternal(const zenkit::DaedalusSymbol* sym);
+    void backendBindDefault();
+    void backendLenient();
+
     template<typename S>
     const zenkit::DaedalusSymbol* symbolOf(S const& sym) {
       if constexpr (std::is_convertible_v<S const&, std::string_view>)
@@ -254,4 +391,7 @@ class OgVm final {
     std::unique_ptr<Zk>                     zk;
     std::string                             vmName;
     std::unordered_map<std::string, External> externals;
+    std::function<void(std::string_view)>   defaultExternal;
+    // The og_script bridge (heap: its address is the backend's og_script_host); null on ZenKit.
+    std::unique_ptr<Rust>                   rust;
   };

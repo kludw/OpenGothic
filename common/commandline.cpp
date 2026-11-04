@@ -179,6 +179,13 @@ CommandLine::CommandLine(int argc, const char** argv) {
         throw std::runtime_error(std::string(arg)+" needs a path");
       (arg=="--waynet-dump" ? wayDump : wayQueries) = argv[i];
       }
+    else if(arg=="--script-dump") {
+      // opengothic-rs (task 4.14): see OgVm::openDump
+      ++i;
+      if(i>=argc)
+        throw std::runtime_error("--script-dump needs a path");
+      scrDump = argv[i];
+      }
     else {
       Log::i("unrecognized commandline option: \"", arg, "\"");
       }

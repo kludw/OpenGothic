@@ -751,28 +751,46 @@ std::string_view Gothic::menuMain() const {
   }
 
 std::unique_ptr<OgVm> Gothic::createPhoenixVm(std::string_view datFile, const ScriptLang lang) {
-  auto sc = loadScript(datFile, lang);
+  auto dat = loadScriptBytes(datFile, lang);
+  auto sc  = parseScript(dat);
   setupCommonScriptClasses(sc);
 
-  auto vm = std::make_unique<OgVm>(std::move(sc), zenkit::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS, std::string(datFile));
+  auto vm = std::make_unique<OgVm>(std::move(sc), zenkit::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS, std::string(datFile), dat);
   setupVmCommonApi(*vm);
   return vm;
   }
 
+// opengothic-rs (task 4.14): the DAT's bytes, so OgVm can offer them to the og_script backend.
+static std::vector<uint8_t> readAll(zenkit::Read& r) {
+  r.seek(0, zenkit::Whence::END);
+  std::vector<uint8_t> bytes(r.tell());
+  r.seek(0, zenkit::Whence::BEG);
+  if(r.read(bytes.data(), bytes.size())!=bytes.size())
+    throw std::runtime_error("short read of a script file");
+  return bytes;
+  }
+
+zenkit::DaedalusScript Gothic::parseScript(const std::vector<uint8_t>& dat) {
+  auto buf = zenkit::Read::from(reinterpret_cast<const std::byte*>(dat.data()), dat.size());
+  zenkit::DaedalusScript script;
+  script.load(buf.get());
+  return script;
+  }
+
 zenkit::DaedalusScript Gothic::loadScript(std::string_view datFile, const ScriptLang lang) {
+  return parseScript(loadScriptBytes(datFile, lang));
+  }
+
+std::vector<uint8_t> Gothic::loadScriptBytes(std::string_view datFile, const ScriptLang lang) {
   if(Resources::hasFile(datFile)) {
     auto buf = Resources::getFileBuffer(datFile);
-    zenkit::DaedalusScript script;
-    script.load(buf.get());
-    return script;
+    return readAll(*buf);
     }
 
   const size_t segment = datFile.find_last_of("\\/");
   if(segment!=std::string::npos && Resources::hasFile(datFile.substr(segment+1))) {
     auto buf = Resources::getFileBuffer(datFile.substr(segment+1));
-    zenkit::DaedalusScript script;
-    script.load(buf.get());
-    return script;
+    return readAll(*buf);
     }
 
   char16_t str16[256] = {};
@@ -795,9 +813,7 @@ zenkit::DaedalusScript Gothic::loadScript(std::string_view datFile, const Script
     }
 
   auto buf = zenkit::Read::from(path);
-  zenkit::DaedalusScript script;
-  script.load(buf.get());
-  return script;
+  return readAll(*buf);
   }
 
 void Gothic::setupCommonScriptClasses(zenkit::DaedalusScript& sc) {

@@ -1467,12 +1467,13 @@ bool GameScript::searchScheme(std::string_view sc, std::string_view listName) {
 
 OgVm GameScript::createVm(Gothic& gothic) {
   auto lang   = gothic.settingsGetI("GAME", "language");
-  auto script = gothic.loadScript(gothic.defaultGameDatFile(), ScriptLang(lang));
+  auto dat    = gothic.loadScriptBytes(gothic.defaultGameDatFile(), ScriptLang(lang));
+  auto script = Gothic::parseScript(dat);
   auto exef   = zenkit::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS;
   if(DirectMemory::isRequired(script)) {
     exef |= zenkit::DaedalusVmExecutionFlag::IGNORE_CONST_SPECIFIER;
     }
-  return OgVm(std::move(script), exef, std::string(gothic.defaultGameDatFile()));
+  return OgVm(std::move(script), exef, std::string(gothic.defaultGameDatFile()), dat);
   }
 
 bool GameScript::hasSymbolName(std::string_view name) {
