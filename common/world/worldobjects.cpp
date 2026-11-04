@@ -16,6 +16,7 @@
 #include "utils/dbgpainter.h"
 #include "gothic.h"
 #include "capi/oghooks.h"
+#include "capi/ogroutine.h"
 
 #include <Tempest/Painter>
 #include <Tempest/Application>
@@ -899,6 +900,7 @@ Interactive *WorldObjects::availableMob(const Npc &pl, std::string_view dest) {
   }
 
 void WorldObjects::setMobRoutine(gtime time, std::string_view scheme, int32_t state) {
+  OgRoutineDump::mobRoutine(time, scheme, state); // opengothic-rs (task 5.14)
   MobRoutine r;
   r.time  = time;
   r.state = state;

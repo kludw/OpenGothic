@@ -225,4 +225,5 @@ class World final {
     void         initScripts(bool firstTime);
 
     Sound        addHitEffect(std::string_view src, std::string_view reciver, std::string_view scheme, const Tempest::Matrix4x4& pos);
+  friend struct OgRoutineDump; // opengothic-rs (task 5.14)
   };

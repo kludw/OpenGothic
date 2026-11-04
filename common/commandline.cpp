@@ -179,6 +179,13 @@ CommandLine::CommandLine(int argc, const char** argv) {
         throw std::runtime_error(std::string(arg)+" needs a path");
       (arg=="--waynet-dump" ? wayDump : wayQueries) = argv[i];
       }
+    else if(arg=="--routine-dump") {
+      // opengothic-rs (task 5.14): see common/capi/ogroutine.h
+      ++i;
+      if(i>=argc)
+        throw std::runtime_error("--routine-dump needs a path");
+      rtnDump = argv[i];
+      }
     else if(arg=="--script-dump") {
       // opengothic-rs (task 4.14): see OgVm::openDump
       ++i;

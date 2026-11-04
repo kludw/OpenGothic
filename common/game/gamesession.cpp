@@ -1,5 +1,6 @@
 #include "gamesession.h"
 #include "capi/ogsim.h"
+#include "capi/ogroutine.h"
 #include "savegameheader.h"
 
 #include <Tempest/Log>
@@ -113,6 +114,7 @@ GameSession::GameSession(std::string file) {
 
   if(!testMode)
     initScripts(true);
+  OgRoutineDump::snapshot(*wrld); // opengothic-rs (task 5.14): no-op without --routine-dump
   wrld->triggerOnStart(true);
   cam->reset(wrld->player());
   Gothic::inst().setLoadingProgress(96);

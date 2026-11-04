@@ -198,4 +198,5 @@ class WorldObjects final {
     void             tickNear(uint64_t dt);
     void             tickTriggers(uint64_t dt);
     static bool      isTargetedBy(Npc& npc,Npc& by);
+  friend struct OgRoutineDump; // opengothic-rs (task 5.14)
   };

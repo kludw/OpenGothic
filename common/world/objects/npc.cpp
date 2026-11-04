@@ -20,6 +20,7 @@
 #include "camera.h"
 #include "gothic.h"
 #include "resources.h"
+#include "capi/ogroutine.h"
 
 using namespace Tempest;
 
@@ -3247,9 +3248,13 @@ void Npc::commitSpell() {
   }
 
 const Npc::Routine& Npc::currentRoutine(bool assertWp) const {
+  return currentRoutineAt(owner.time(), assertWp);
+  }
+
+const Npc::Routine& Npc::currentRoutineAt(gtime wtime, bool assertWp) const {
   // find routine for current time
   // if there is no such routine search counter clock-wise until one is found
-  auto time = owner.time().timeInDay();
+  auto time = wtime.timeInDay();
   for(auto& i:routines) {
     if(assertWp && i.point==nullptr)
       continue;
@@ -3282,13 +3287,20 @@ const Npc::Routine& Npc::currentRoutine(bool assertWp) const {
   }
 
 const WayPoint* Npc::currentTaPoint() const {
+  return currentTaPointAt(owner.time());
+  }
+
+const WayPoint* Npc::currentTaPointAt(gtime wtime) const {
   if(routines.empty())
     return owner.findPoint(hnpc->wp,false);
-  return currentRoutine(true).point;
+  return currentRoutineAt(wtime,true).point;
   }
 
 gtime Npc::endTime(const Npc::Routine &r) const {
-  auto wtime = owner.time();
+  return endTimeAt(owner.time(), r);
+  }
+
+gtime Npc::endTimeAt(gtime wtime, const Npc::Routine &r) const {
   auto time  = wtime.timeInDay();
 
   //NOTE: should we consider time extension for invalid routine sequences?
@@ -4348,6 +4360,7 @@ void Npc::setStateTime(int64_t time) {
 
 void Npc::addRoutine(gtime s, gtime e, uint32_t callback, std::string_view point) {
   auto wp = world().findPoint(point,false);
+  OgRoutineDump::added(*this, s, e, callback, point, wp); // opengothic-rs (task 5.14)
 
   Routine r;
   r.start    = s;
@@ -4364,6 +4377,7 @@ void Npc::addRoutine(gtime s, gtime e, uint32_t callback, std::string_view point
   }
 
 void Npc::excRoutine(size_t callback) {
+  OgRoutineDump::exchanged(*this, callback); // opengothic-rs (task 5.14)
   routines.clear();
   owner.script().invokeState(this,currentOther,currentVictim,callback);
   // aiState.eTime = gtime();

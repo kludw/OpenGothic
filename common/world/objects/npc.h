@@ -496,6 +496,11 @@ class Npc final {
 
     auto      currentRoutine(bool assertWp = false) const -> const Routine&;
     gtime     endTime(const Routine& r) const;
+    // opengothic-rs (task 5.14): the three above at an explicit world time, for
+    // capi/ogroutine.h; the stock functions pass owner.time().
+    auto      currentRoutineAt(gtime wtime, bool assertWp) const -> const Routine&;
+    gtime     endTimeAt(gtime wtime, const Routine& r) const;
+    auto      currentTaPointAt(gtime wtime) const -> const WayPoint*;
 
     bool      implPointAt(const Tempest::Vec3& to);
     bool      implLookAtWp(uint64_t dt);
@@ -653,4 +658,5 @@ class Npc final {
     Sound                          sfxWeapon;
 
   friend class MoveAlgo;
+  friend struct OgRoutineDump;
   };
