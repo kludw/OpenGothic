@@ -10,6 +10,11 @@ using namespace Tempest;
 
 ParticlesDefinitions::ParticlesDefinitions() {
   vm = Gothic::inst().createPhoenixVm("ParticleFx.dat");
+  // opengothic-rs (task 4.15): dump every particle effect; the instances aren't kept.
+  if(vm && OgVm::dumping())
+    vm->enumerate_instances_by_class_name("C_PARTICLEFX", [this](zenkit::DaedalusSymbol& s) {
+      implGetDirect(s.name(), false);
+      });
   }
 
 ParticlesDefinitions::~ParticlesDefinitions() {

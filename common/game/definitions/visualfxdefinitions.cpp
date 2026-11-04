@@ -9,6 +9,16 @@ using namespace Tempest;
 
 VisualFxDefinitions::VisualFxDefinitions() {
   vm = Gothic::inst().createPhoenixVm("VisualFx.dat");
+  // opengothic-rs (task 4.15): dump every effect and every emit key (in play VisualFx's
+  // constructor inits the keys an effect names); the instances aren't kept.
+  if(vm && OgVm::dumping()) {
+    vm->enumerate_instances_by_class_name("CFX_BASE", [this](zenkit::DaedalusSymbol& s) {
+      implGet(s.name());
+      });
+    vm->enumerate_instances_by_class_name("C_PARTICLEFXEMITKEY", [this](zenkit::DaedalusSymbol& s) {
+      vm->init_instance<zenkit::IParticleEffectEmitKey>(&s);
+      });
+    }
   }
 
 VisualFxDefinitions::~VisualFxDefinitions() {

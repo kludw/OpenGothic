@@ -56,6 +56,9 @@ class OgVm final {
     // instance's members as JSON Lines, read through ZenKit's symbols (the same objects for
     // both backends). Throws when the file can't be written or a dump is already open.
     static void openDump(const std::string& path);
+    // A dump is open: lazily loaded definitions (ParticleFx, VisualFx: task 4.15) then init every
+    // instance of their classes once, so the dump covers the whole DAT, not only what a run used.
+    static bool dumping();
 
     template<typename R = zenkit::IgnoreReturnValue, typename S, typename... P>
     R call_function(S&& sym, P... args) {
@@ -215,7 +218,6 @@ class OgVm final {
 
   private:
 
-    static bool dumping();
     void dump(const zenkit::DaedalusInstance& inst, const zenkit::DaedalusSymbol* sym);
 
     // The backend half of the entries; the ZenKit half when no backend took the VM.
