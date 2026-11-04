@@ -516,12 +516,19 @@ void OgVm::dump(const zenkit::DaedalusInstance& inst, const zenkit::DaedalusSymb
   if(!dumping() || sym==nullptr)
     return;
   // {"vm":…,"backend":…,"sym":…,"members":{NAME:[values]}} in the script trace's value encoding.
+  std::string line = "{\"vm\":\"" + vmName + "\",\"backend\":\"";
+  line += rust!=nullptr ? "rust" : "zenkit";
+  line += "\",\"sym\":\"" + sym->name() + "\",\"members\":" + membersJson(inst, sym) + "}\n";
+  std::lock_guard<std::mutex> guard(dumpSync);
+  dumpFile << line;
+  dumpFile.flush();
+  }
+
+std::string OgVm::membersJson(const zenkit::DaedalusInstance& inst, const zenkit::DaedalusSymbol* sym) const {
   auto* cls = zk->find_symbol_by_index(sym->parent());
   while(cls!=nullptr && cls->type()!=zenkit::DaedalusDataType::CLASS)
     cls = zk->find_symbol_by_index(cls->parent());
-  std::string line = "{\"vm\":\"" + vmName + "\",\"backend\":\"";
-  line += rust!=nullptr ? "rust" : "zenkit";
-  line += "\",\"sym\":\"" + sym->name() + "\",\"members\":{";
+  std::string line = "{";
   bool first = true;
   if(cls!=nullptr) {
     for(auto* m : zk->find_class_members(*cls)) {
@@ -556,10 +563,7 @@ void OgVm::dump(const zenkit::DaedalusInstance& inst, const zenkit::DaedalusSymb
       line += values;
       }
     }
-  line += "}}\n";
-  std::lock_guard<std::mutex> guard(dumpSync);
-  dumpFile << line;
-  dumpFile.flush();
+  return line + "}";
   }
 
 extern "C" void og_script_set_backend(const og_script_backend* b) {

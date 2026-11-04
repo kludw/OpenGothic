@@ -59,6 +59,9 @@ class OgVm final {
     // A dump is open: lazily loaded definitions (ParticleFx, VisualFx: task 4.15) then init every
     // instance of their classes once, so the dump covers the whole DAT, not only what a run used.
     static bool dumping();
+    // `{NAME:[values],…}` for every member of the instance's class, read through ZenKit's
+    // symbols in the script trace's value encoding (the --script-dump member format).
+    std::string membersJson(const zenkit::DaedalusInstance& inst, const zenkit::DaedalusSymbol* sym) const;
 
     template<typename R = zenkit::IgnoreReturnValue, typename S, typename... P>
     R call_function(S&& sym, P... args) {

@@ -193,6 +193,13 @@ CommandLine::CommandLine(int argc, const char** argv) {
         throw std::runtime_error("--script-dump needs a path");
       scrDump = argv[i];
       }
+    else if(arg=="--script-state-dump") {
+      // opengothic-rs (task 4.17): see GameScript::dumpState
+      ++i;
+      if(i>=argc)
+        throw std::runtime_error("--script-state-dump needs a path");
+      scrStateDump = argv[i];
+      }
     else {
       Log::i("unrecognized commandline option: \"", arg, "\"");
       }

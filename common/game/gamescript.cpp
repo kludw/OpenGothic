@@ -658,6 +658,109 @@ void GameScript::loadVar(Serialize &fin) {
     }
   }
 
+// Included here, not at the top, so the bindExternal lines og-daedalus' catalog pins don't move.
+#include "script/scripttrace.h"
+
+#include <fstream>
+
+void GameScript::dumpState(std::string_view path) {
+  // JSON Lines in the script trace's value encoding. Instances are named by where the engine keeps
+  // them (NPC index, world item index, owner + inventory slot), never by address or creation order:
+  // the dump must be equal for loads under different backends.
+  auto&         w = world();
+  std::ofstream out{std::string(path), std::ios::binary | std::ios::trunc};
+  if(!out)
+    throw std::runtime_error("--script-state-dump: can't write " + std::string(path));
+
+  auto instRef = [&](const zenkit::DaedalusInstance* inst) -> std::string {
+    if(inst==nullptr)
+      return "null";
+    auto*       sym  = vm.find_symbol_by_index(inst->symbol_index());
+    std::string name = ScriptTrace::stringValue(sym==nullptr ? std::string_view("?") : sym->name());
+    for(uint32_t r=0; r<w.npcCount(); ++r) {
+      auto& n = *w.npcById(r);
+      if(&n.handle()==inst)
+        return "{\"npc\":" + std::to_string(r) + ",\"sym\":" + name + "}";
+      auto& items = n.inventory().ogItems();
+      for(size_t k=0; k<items.size(); ++k)
+        if(&items[k]->handle()==inst)
+          return "{\"npc\":" + std::to_string(r) + ",\"slot\":" + std::to_string(k) + ",\"sym\":" + name + "}";
+      }
+    if(auto id = w.itmId(inst); id!=uint32_t(-1))
+      return "{\"item\":" + std::to_string(id) + ",\"sym\":" + name + "}";
+    return "{\"sym\":" + name + "}";
+    };
+  auto instance = [&](std::string head, const zenkit::DaedalusInstance& inst) {
+    auto* sym = vm.find_symbol_by_index(inst.symbol_index());
+    if(sym==nullptr)
+      throw std::runtime_error("--script-state-dump: instance without a symbol in " + head);
+    out << "{" << head << ",\"sym\":" << ScriptTrace::stringValue(sym->name())
+        << ",\"members\":" << vm.membersJson(inst, sym) << "}\n";
+    };
+
+  size_t globals = 0;
+  for(uint32_t i=0; i<vm.symbols().size(); ++i) {
+    auto* sym = vm.find_symbol_by_index(i);
+    if(sym->is_member() || sym->is_const())
+      continue;
+    // ZenKit's own temporary-strings slot, appended after the DAT's symbols: interpreter scratch,
+    // not script state (the Rust VM keeps its temporaries itself, so the slot stays empty there).
+    if(sym->is_generated() && sym->name()=="$PHOENIX_FAKE_STRINGS")
+      continue;
+    // Classes and prototypes aren't variables (ZenKit leaves them non-const).
+    auto t = sym->type();
+    if(t!=zenkit::DaedalusDataType::INT && t!=zenkit::DaedalusDataType::FLOAT && t!=zenkit::DaedalusDataType::STRING &&
+       t!=zenkit::DaedalusDataType::FUNCTION && t!=zenkit::DaedalusDataType::INSTANCE)
+      continue;
+    // Instance variables (SELF, HERO, instance parameters) hold one instance but have count 0.
+    // A func variable stores one value whatever its count; a func parameter (count 0) has none.
+    uint16_t count = uint16_t(sym->count());
+    if(t==zenkit::DaedalusDataType::INSTANCE)
+      count = 1;
+    else if(t==zenkit::DaedalusDataType::FUNCTION)
+      count = std::min<uint16_t>(count, 1);
+    if(count==0)
+      continue;
+    std::string values = "[";
+    for(uint16_t j=0; j<count; ++j) {
+      values += j==0 ? "" : ",";
+      switch(sym->type()) {
+        case zenkit::DaedalusDataType::INT:
+        case zenkit::DaedalusDataType::FUNCTION:
+          values += ScriptTrace::intValue(sym->get_int(j));
+          break;
+        case zenkit::DaedalusDataType::FLOAT:
+          values += ScriptTrace::floatValue(sym->get_float(j));
+          break;
+        case zenkit::DaedalusDataType::STRING:
+          values += ScriptTrace::stringValue(sym->get_string(j));
+          break;
+        default:
+          values += instRef(sym->get_instance().get());
+        }
+      }
+    out << "{\"global\":" << ScriptTrace::stringValue(sym->name()) << ",\"values\":" << values << "]}\n";
+    ++globals;
+    }
+  for(size_t k=0; k<dialogsInfo.size(); ++k)
+    instance("\"info\":" + std::to_string(k), *dialogsInfo[k]);
+  for(uint32_t r=0; r<w.npcCount(); ++r) {
+    auto& n = *w.npcById(r);
+    instance("\"npc\":" + std::to_string(r), n.handle());
+    auto& items = n.inventory().ogItems();
+    for(size_t k=0; k<items.size(); ++k)
+      instance("\"npc\":" + std::to_string(r) + ",\"slot\":" + std::to_string(k), items[k]->handle());
+    }
+  uint32_t worldItems = 0;
+  for(; auto* it = w.itmById(worldItems); ++worldItems)
+    instance("\"item\":" + std::to_string(worldItems), it->handle());
+  out.flush();
+  if(!out)
+    throw std::runtime_error("--script-state-dump: writing " + std::string(path) + " failed");
+  Tempest::Log::i("script state dump: ", globals, " globals, ", dialogsInfo.size(), " dialogs, ", w.npcCount(),
+                  " npcs, ", worldItems, " world items written to ", path);
+  }
+
 void GameScript::savePerc(Serialize& fout) {
   fout.write(uint32_t(PERC_Count));
   for(size_t i=0; i<PERC_Count; ++i) {

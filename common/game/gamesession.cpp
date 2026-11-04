@@ -17,6 +17,7 @@
 #include "camera.h"
 #include "gothic.h"
 #include "capi/ogrng.h"
+#include "commandline.h"
 #include "script/scripttrace.h"
 
 using namespace Tempest;
@@ -181,6 +182,9 @@ GameSession::GameSession(Serialize &fin) {
   if(fin.setEntry("opengothic-rs/rng"))
     OgRng::load(fin); else
     Tempest::Log::i("ogrng: save has no opengothic-rs/rng entry, streams continue");
+  // opengothic-rs (task 4.17): script state right after the load, before any tick runs a script.
+  if(auto path = CommandLine::inst().scriptStateDump(); !path.empty())
+    vm->dumpState(path);
   Gothic::inst().setLoadingProgress(96);
   }
 

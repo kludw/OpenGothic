@@ -72,6 +72,10 @@ class GameScript final {
     void         loadQuests(Serialize& fin);
     void         saveVar(Serialize& fout);
     void         loadVar(Serialize& fin);
+    // opengothic-rs (task 4.17): `--script-state-dump <path>`: right after a save is loaded, every
+    // non-const global and the members of every instance the engine holds (dialogs, NPCs with their
+    // inventories, world items), so loads under both script backends can be compared.
+    void         dumpState(std::string_view path);
     void         savePerc(Serialize& fout);
     void         loadPerc(Serialize& fin);
 
