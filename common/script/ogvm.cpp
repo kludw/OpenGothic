@@ -46,6 +46,21 @@ class OgVm::Rust final {
     std::unordered_map<const zenkit::DaedalusInstance*, uint32_t> slotOf;
     // Strings handed to the backend by member_get / call_external, valid until the next call.
     std::string               scratch;
+    // Backend entries running (nested ones come from externals). The backend keeps no handle
+    // between entries (globals live in ZenKit's symbols), so when the outermost one returns
+    // every pin goes: the instances are ZenKit's and the engine's again, as on ZenKit.
+    uint32_t                  entries = 0;
+
+    // One backend entry; the outermost releases every pin when it ends.
+    struct Entry final {
+      explicit Entry(Rust& r) : r(r) { ++r.entries; }
+      Entry(const Entry&) = delete;
+      ~Entry() {
+        if(--r.entries==0)
+          r.releaseAll();
+        }
+      Rust& r;
+      };
 
     og_script_inst pin(std::shared_ptr<zenkit::DaedalusInstance> const& inst) {
       if(inst==nullptr)
@@ -89,6 +104,18 @@ class OgVm::Rust final {
         freeSlots.push_back(h.slot);
       }
 
+    void releaseAll() {
+      for(uint32_t slot=0; slot<pins.size(); ++slot) {
+        auto& p = pins[slot];
+        if(p.inst==nullptr)
+          continue;
+        p.inst.reset();
+        if(p.generation!=UINT32_MAX)
+          freeSlots.push_back(slot);
+        }
+      slotOf.clear();
+      }
+
     zenkit::DaedalusSymbol& member(uint32_t index) {
       auto* sym = owner->zk->find_symbol_by_index(index);
       if(sym==nullptr)
@@ -96,6 +123,92 @@ class OgVm::Rust final {
       if(!sym->is_member())
         throw std::runtime_error(sym->name() + " is not a class member");
       return *sym;
+      }
+
+    zenkit::DaedalusSymbol& global(uint32_t index) {
+      auto* sym = owner->zk->find_symbol_by_index(index);
+      if(sym==nullptr)
+        throw std::runtime_error("no symbol " + std::to_string(index));
+      if(sym->is_member())
+        throw std::runtime_error(sym->name() + " is a class member, not a global");
+      return *sym;
+      }
+
+    int32_t globalGet(uint32_t index, uint16_t i, uint32_t kind, og_script_value& out) {
+      auto& sym = global(index);
+      out = {};
+      out.kind = kind;
+      switch(kind) {
+        case OG_SCRIPT_INT:
+          out.i = sym.get_int(i);
+          return OG_SCRIPT_OK;
+        case OG_SCRIPT_FLOAT:
+          out.f = sym.get_float(i);
+          return OG_SCRIPT_OK;
+        case OG_SCRIPT_STRING:
+          scratch = sym.get_string(i);
+          out.str = scratch.data();
+          out.len = scratch.size();
+          return OG_SCRIPT_OK;
+        case OG_SCRIPT_INSTANCE:
+          out.inst = pin(sym.get_instance());
+          return OG_SCRIPT_OK;
+        }
+      throw std::runtime_error("og_script_global_get: no global of kind " + std::to_string(kind));
+      }
+
+    int32_t globalSet(uint32_t index, uint16_t i, const og_script_value& v) {
+      auto& sym = global(index);
+      switch(v.kind) {
+        case OG_SCRIPT_INT:
+          sym.set_int(v.i, i);
+          return OG_SCRIPT_OK;
+        case OG_SCRIPT_FLOAT:
+          sym.set_float(v.f, i);
+          return OG_SCRIPT_OK;
+        case OG_SCRIPT_STRING:
+          sym.set_string(std::string_view(v.str, v.len), i);
+          return OG_SCRIPT_OK;
+        case OG_SCRIPT_INSTANCE:
+          sym.set_instance(get(v.inst));
+          return OG_SCRIPT_OK;
+        }
+      throw std::runtime_error("og_script_global_set: no global of kind " + std::to_string(v.kind));
+      }
+
+    // The trace's encoding of a value the backend hands over (ScriptTrace::value's cases).
+    std::string traceValue(const og_script_value& v) {
+      switch(v.kind) {
+        case OG_SCRIPT_VOID:
+          return "null";
+        case OG_SCRIPT_INT:
+          return ScriptTrace::intValue(v.i);
+        case OG_SCRIPT_FLOAT:
+          return ScriptTrace::floatValue(v.f);
+        case OG_SCRIPT_STRING:
+          return ScriptTrace::stringValue(std::string_view(v.str, v.len));
+        case OG_SCRIPT_FUNCTION:
+          return ScriptTrace::functionValue(owner->zk->find_symbol_by_index(uint32_t(v.i)));
+        case OG_SCRIPT_INSTANCE:
+          return ScriptTrace::instanceValue(*owner->zk, get(v.inst));
+        }
+      throw std::runtime_error("og_script_trace_external: no value of kind " + std::to_string(v.kind));
+      }
+
+    void traceExternal(std::string_view ext, const og_script_value* args, size_t count, const og_script_value* ret, bool threw) {
+      if(!ScriptTrace::active())
+        return;
+      auto* sym = owner->zk->find_symbol_by_name(ext);
+      if(sym==nullptr)
+        throw std::runtime_error("og_script_trace_external: no symbol " + std::string(ext));
+      std::string values = "[";
+      for(size_t i=0; i<count; ++i)
+        values += (i==0 ? "" : ",") + traceValue(args[i]);
+      values += "]";
+      // Same event as OgVm::tracedExternal writes for an engine callback.
+      ScriptTrace::Ext trace(owner->vmName, sym->name(), std::move(values));
+      if(!threw)
+        trace.ret(ret!=nullptr ? traceValue(*ret) : "null");
       }
 
     void push(const og_script_value& v) {
@@ -114,6 +227,23 @@ class OgVm::Rust final {
         case OG_SCRIPT_INSTANCE:
           zk.push_instance(get(v.inst));
           return;
+        case OG_SCRIPT_REFERENCE: {
+          auto* sym = zk.find_symbol_by_index(uint32_t(v.i));
+          if(sym==nullptr)
+            throw std::runtime_error("og_script: reference to no symbol " + std::to_string(v.i));
+          if(v.index>UINT8_MAX)
+            throw std::runtime_error("og_script: reference to " + sym->name() + " index " + std::to_string(v.index));
+          // ZenKit's PUSHV takes the instance register as the reference's context; restored
+          // also when the push throws (stack overflow).
+          struct Restore final {
+            zenkit::DaedalusVm&                       zk;
+            std::shared_ptr<zenkit::DaedalusInstance> prev;
+            ~Restore() { zk.unsafe_set_gi(std::move(prev)); }
+            } restore {zk, zk.unsafe_get_gi()};
+          zk.unsafe_set_gi(get(v.inst));
+          zk.push_reference(sym, uint8_t(v.index));
+          return;
+          }
         }
       throw std::runtime_error("og_script: no argument of kind " + std::to_string(v.kind));
       }
@@ -331,12 +461,15 @@ og_script_inst OgVm::backendPin(std::shared_ptr<zenkit::DaedalusInstance> const&
   }
 
 void OgVm::backendCall(const zenkit::DaedalusSymbol* s, std::vector<og_script_value>& args, uint32_t retKind, og_script_value& ret) {
+  // callOn pinned the arguments before: they go with this entry.
+  Rust::Entry entry(*rust);
   char err[1024] = {};
   auto st = backend.call_function(rust->vm, s->index(), args.data(), args.size(), retKind, &ret, err, sizeof(err));
   rust->check(st, err, "call_function " + s->name());
   }
 
 void OgVm::backendInit(std::shared_ptr<zenkit::DaedalusInstance> const& inst, const zenkit::DaedalusSymbol* s) {
+  Rust::Entry entry(*rust);
   char err[1024] = {};
   auto h  = rust->pin(inst);
   auto st = backend.init_instance(rust->vm, s->index(), h, err, sizeof(err));
@@ -344,6 +477,7 @@ void OgVm::backendInit(std::shared_ptr<zenkit::DaedalusInstance> const& inst, co
   }
 
 void OgVm::backendBind(std::shared_ptr<zenkit::DaedalusInstance> const& inst, const zenkit::DaedalusSymbol* s) {
+  Rust::Entry entry(*rust);
   char err[1024] = {};
   auto h  = rust->pin(inst);
   auto st = backend.bind_instance(rust->vm, s->index(), h, err, sizeof(err));
@@ -451,6 +585,29 @@ extern "C" int32_t og_script_member_get(og_script_host* host, og_script_inst ins
 extern "C" int32_t og_script_member_set(og_script_host* host, og_script_inst inst, uint32_t member, uint16_t index,
                                         const og_script_value* value, char* err, size_t errLen) {
   return guarded(host, err, errLen, [&](OgVm::Rust& r) { return r.memberSet(inst, member, index, *value); });
+  }
+
+extern "C" int32_t og_script_global_get(og_script_host* host, uint32_t symbol, uint16_t index, uint32_t kind,
+                                        og_script_value* out, char* err, size_t errLen) {
+  return guarded(host, err, errLen, [&](OgVm::Rust& r) { return r.globalGet(symbol, index, kind, *out); });
+  }
+
+extern "C" int32_t og_script_global_set(og_script_host* host, uint32_t symbol, uint16_t index,
+                                        const og_script_value* value, char* err, size_t errLen) {
+  return guarded(host, err, errLen, [&](OgVm::Rust& r) { return r.globalSet(symbol, index, *value); });
+  }
+
+extern "C" int32_t og_script_tracing(void) {
+  return ScriptTrace::active() ? 1 : 0;
+  }
+
+extern "C" int32_t og_script_trace_external(og_script_host* host, const char* name, size_t nameLen,
+                                            const og_script_value* args, size_t count, const og_script_value* ret,
+                                            int32_t threw, char* err, size_t errLen) {
+  return guarded(host, err, errLen, [&](OgVm::Rust& r) {
+    r.traceExternal(std::string_view(name, nameLen), args, count, ret, threw!=0);
+    return OG_SCRIPT_OK;
+    });
   }
 
 extern "C" int32_t og_script_instance_symbol(og_script_host* host, og_script_inst inst, uint32_t* symbol, char* err, size_t errLen) {

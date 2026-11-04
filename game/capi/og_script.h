@@ -13,8 +13,12 @@
  *
  * Strings cross as the edition's bytes (pointer + length), never as UTF-8; the backend
  * converts. Instances cross as og_script_inst handles of the host's registry: the registry
- * pins the C++ object (a shared_ptr) from the moment a handle is made until it is released
- * or the VM is destroyed, so a handle never dangles; a released or unknown handle is an error.
+ * pins the C++ object (a shared_ptr) from the moment a handle is made until it is released,
+ * the outermost backend entry (init_instance, bind_instance, call_function) that was running
+ * or came next returns, or the VM is destroyed, so a handle never dangles; a released or
+ * unknown handle is an error. Version 2 (task 4.16): the backend keeps no handle between
+ * entries; ZenKit's symbols hold the globals (og_script_global_get/set), as the engine reads
+ * and writes them itself (SELF/OTHER around its calls, saves, NPC routines).
  *
  * Threads: a VM is used by one thread at a time (the engine's own rule for ZenKit VMs);
  * host functions run on the thread of the backend call that made them. Callbacks must not
@@ -29,7 +33,7 @@
 extern "C" {
 #endif
 
-#define OG_SCRIPT_VERSION 1
+#define OG_SCRIPT_VERSION 2
 
 /* Status codes of backend callbacks and host functions. */
 #define OG_SCRIPT_OK          0
@@ -59,6 +63,11 @@ typedef enum og_script_kind {
   OG_SCRIPT_FUNCTION = 5, /* a function symbol's index, in `i` */
   OG_SCRIPT_IGNORE   = 6, /* call_function's ret_kind only: drop whatever the function returns
                            * (ZenKit's IgnoreReturnValue); OG_SCRIPT_VOID requires a void function */
+  OG_SCRIPT_REFERENCE = 7, /* og_script_call_external arguments only (version 2): variable `i`
+                            * (a symbol index), element `index`, of instance `inst` for a member.
+                            * The host pushes a reference to it as ZenKit's PUSHV does, so a
+                            * callback's std::string_view points into the variable, not into a
+                            * temporary string a nested script call may reuse. */
   } og_script_kind;
 
 /* One value. `str`/`len` are valid for the call that hands them over: the receiver copies.
@@ -70,6 +79,7 @@ typedef struct og_script_value {
   const char*    str;
   size_t         len;
   og_script_inst inst;
+  uint32_t       index; /* OG_SCRIPT_REFERENCE: the element */
   } og_script_value;
 
 /* The host side of one VM (OgVm's bridge); stable for the VM's life. */
@@ -99,7 +109,9 @@ typedef struct og_script_backend {
    * A returned string stays valid until the next call into this VM. */
   int32_t (*call_function)(void* vm, uint32_t symbol, const og_script_value* args, size_t count,
                            uint32_t ret_kind, og_script_value* ret, char* err, size_t err_len);
-  /* The instance a global instance variable holds (SELF, OTHER, ...); {0,0} for null. */
+  /* The instance a global instance variable holds (SELF, OTHER, ...); {0,0} for null. The
+   * engine uses ZenKit's symbols instead since version 2 (they hold the globals); both
+   * callbacks stay mandatory until the table changes again. */
   int32_t (*get_instance)(void* vm, uint32_t symbol, og_script_inst* out, char* err, size_t err_len);
   int32_t (*set_instance)(void* vm, uint32_t symbol, og_script_inst inst, char* err, size_t err_len);
   } og_script_backend;
@@ -119,6 +131,15 @@ int32_t og_script_member_get(og_script_host* host, og_script_inst inst, uint32_t
 int32_t og_script_member_set(og_script_host* host, og_script_inst inst, uint32_t member, uint16_t index,
                              const og_script_value* value, char* err, size_t err_len);
 
+/* Global (non-member) variable `symbol`, element `index`, read as `kind` (OG_SCRIPT_INT,
+ * _FLOAT, _STRING, or _INSTANCE: the instance an instance symbol holds, pinned) through
+ * ZenKit's DaedalusSymbol accessors, with their checks; set likewise (no const check: the
+ * backend checks, as ZenKit's VM does before it writes). Version 2. */
+int32_t og_script_global_get(og_script_host* host, uint32_t symbol, uint16_t index, uint32_t kind,
+                             og_script_value* out, char* err, size_t err_len);
+int32_t og_script_global_set(og_script_host* host, uint32_t symbol, uint16_t index,
+                             const og_script_value* value, char* err, size_t err_len);
+
 /* The instance symbol `inst` was made for. */
 int32_t og_script_instance_symbol(og_script_host* host, og_script_inst inst, uint32_t* symbol,
                                   char* err, size_t err_len);
@@ -134,6 +155,17 @@ int32_t og_script_instance_release(og_script_host* host, og_script_inst inst, ch
 int32_t og_script_call_external(og_script_host* host, const char* name, size_t name_len,
                                 const og_script_value* args, size_t count, uint32_t ret_kind,
                                 og_script_value* ret, char* err, size_t err_len);
+
+/* `--script-trace` (task 4.13) is recording: externals the backend runs itself must then be
+ * reported with og_script_trace_external. 1 or 0. Version 2. */
+int32_t og_script_tracing(void);
+/* Records a call of external `name` (raw bytes, folded like og_script_call_external) that
+ * the backend ran itself, as the trace records the engine's callbacks: `args` in order,
+ * `ret` (NULL for a void external), `threw` = it failed. A no-op when not tracing.
+ * Version 2 (task 4.16). */
+int32_t og_script_trace_external(og_script_host* host, const char* name, size_t name_len,
+                                 const og_script_value* args, size_t count, const og_script_value* ret,
+                                 int32_t threw, char* err, size_t err_len);
 
 /* --- Test support (seam tests without a running game) --- */
 
