@@ -322,7 +322,7 @@ void Serialize::implWrite(const zenkit::INpc& h) {
   write(h.wp,h.exp,h.exp_next,h.lp,h.bodystate_interruptable_override,h.no_focus);
   }
 
-void Serialize::readNpc(zenkit::DaedalusVm& vm, std::shared_ptr<zenkit::INpc>& h) {
+void Serialize::readNpc(OgVm& vm, std::shared_ptr<zenkit::INpc>& h) {
   uint32_t instanceSymbol=0;
   read(instanceSymbol);
 

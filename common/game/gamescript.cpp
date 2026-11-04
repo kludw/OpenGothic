@@ -96,7 +96,7 @@ GameScript::GameScript(GameSession &owner)
 
   vmLang = Gothic::inst().settingsGetI("GAME", "language");
   vm.register_exception_handler(zenkit::lenient_vm_exception_handler);
-  Gothic::inst().setupCommonScriptClasses(vm);
+  Gothic::inst().setupCommonScriptClasses(vm.zenkit());
   Gothic::inst().setupVmCommonApi(vm);
   aiDefaultPipe.reset(new GlobalOutput(*this));
   initCommon();
@@ -427,8 +427,8 @@ void GameScript::initCommon() {
       }
     }
 
-  if(DirectMemory::isRequired(vm))
-    dma.reset(new DirectMemory(*this, vm));
+  if(DirectMemory::isRequired(vm.zenkit()))
+    dma.reset(new DirectMemory(*this, vm.zenkit()));
   }
 
 void GameScript::initSettings() {
@@ -1465,14 +1465,14 @@ bool GameScript::searchScheme(std::string_view sc, std::string_view listName) {
   return false;
   }
 
-zenkit::DaedalusVm GameScript::createVm(Gothic& gothic) {
+OgVm GameScript::createVm(Gothic& gothic) {
   auto lang   = gothic.settingsGetI("GAME", "language");
   auto script = gothic.loadScript(gothic.defaultGameDatFile(), ScriptLang(lang));
   auto exef   = zenkit::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS;
   if(DirectMemory::isRequired(script)) {
     exef |= zenkit::DaedalusVmExecutionFlag::IGNORE_CONST_SPECIFIER;
     }
-  return zenkit::DaedalusVm(std::move(script), exef);
+  return OgVm(std::move(script), exef);
   }
 
 bool GameScript::hasSymbolName(std::string_view name) {

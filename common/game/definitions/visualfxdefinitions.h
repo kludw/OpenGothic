@@ -1,6 +1,6 @@
 #pragma once
 
-#include <zenkit/DaedalusVm.hh>
+#include "script/ogvm.h"
 #include <zenkit/addon/daedalus.hh>
 
 #include <unordered_map>
@@ -16,7 +16,7 @@ class VisualFxDefinitions final {
     const VisualFx *get(std::string_view name);
 
   private:
-    std::unique_ptr<zenkit::DaedalusVm>                       vm;
+    std::unique_ptr<OgVm>                       vm;
     std::unordered_map<std::string,std::unique_ptr<VisualFx>> vfx;
 
     std::shared_ptr<zenkit::IEffectBase> implGet(std::string_view name);

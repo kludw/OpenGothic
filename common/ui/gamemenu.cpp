@@ -266,7 +266,7 @@ struct GameMenu::SavNameDialog : Dialog {
   bool         accepted = false;
   };
 
-GameMenu::GameMenu(MenuRoot &owner, KeyCodec& keyCodec, zenkit::DaedalusVm& vm, std::string_view menuSection, KeyCodec::Action kClose)
+GameMenu::GameMenu(MenuRoot &owner, KeyCodec& keyCodec, OgVm& vm, std::string_view menuSection, KeyCodec::Action kClose)
   :owner(owner), keyCodec(keyCodec), vm(&vm), kClose(kClose) {
   setCursorShape(CursorShape::Hidden);
   timer.timeout.bind(this,&GameMenu::onTick);
@@ -314,7 +314,7 @@ GameMenu::~GameMenu() {
   Resources::device().waitIdle(); // safe-delete savethumb
   }
 
-void GameMenu::resetVm(zenkit::DaedalusVm* inVm) {
+void GameMenu::resetVm(OgVm* inVm) {
   vm = inVm;
   for(int i=0; i<zenkit::IMenu::item_count; ++i){
     hItems[i].handle = nullptr;

@@ -23,7 +23,7 @@ const FightAi::FA& FightAi::operator[](size_t i) const {
   return tmp;
   }
 
-zenkit::IFightAi FightAi::loadAi(zenkit::DaedalusVm& vm, std::string_view name) {
+zenkit::IFightAi FightAi::loadAi(OgVm& vm, std::string_view name) {
   auto id = vm.find_symbol_by_name(name);
   if(id==nullptr)
     return {};
@@ -47,7 +47,7 @@ zenkit::IFightAi FightAi::loadAi(zenkit::DaedalusVm& vm, std::string_view name) 
   return {};
   }
 
-FightAi::FA FightAi::loadAi(zenkit::DaedalusVm &vm, size_t id) {
+FightAi::FA FightAi::loadAi(OgVm &vm, size_t id) {
   FA ret={};
 
   string_frm name("FA_ENEMY_PREHIT_",int(id));

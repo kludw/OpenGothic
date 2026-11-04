@@ -1,6 +1,6 @@
 #pragma once
 
-#include <zenkit/DaedalusVm.hh>
+#include "script/ogvm.h"
 #include <zenkit/addon/daedalus.hh>
 
 #include <unordered_map>
@@ -21,7 +21,7 @@ class ParticlesDefinitions final {
 
   private:
     std::recursive_mutex                sync;
-    std::unique_ptr<zenkit::DaedalusVm> vm;
+    std::unique_ptr<OgVm> vm;
 
     std::unordered_map<std::string,          std::unique_ptr<ParticleFx>> pfx;
     std::unordered_map<const VisualFx::Key*, std::unique_ptr<ParticleFx>> pfxKey;

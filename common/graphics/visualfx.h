@@ -1,6 +1,6 @@
 #pragma once
 
-#include <zenkit/DaedalusVm.hh>
+#include "script/ogvm.h"
 #include <zenkit/addon/daedalus.hh>
 
 #include <Tempest/Point>
@@ -13,7 +13,7 @@ class World;
 
 class VisualFx final {
   public:
-    VisualFx(const zenkit::IEffectBase& src, zenkit::DaedalusVm& tmpVm, std::string_view name);
+    VisualFx(const zenkit::IEffectBase& src, OgVm& tmpVm, std::string_view name);
 
     enum Collision : uint8_t {
       NoCollision = 0,

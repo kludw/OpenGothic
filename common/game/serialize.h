@@ -14,7 +14,7 @@
 
 #include <miniz.h>
 
-#include <zenkit/DaedalusVm.hh>
+#include "script/ogvm.h"
 #include <zenkit/addon/daedalus.hh>
 #include <zenkit/ModelAnimation.hh>
 
@@ -82,7 +82,7 @@ class Serialize {
       (implRead(a),... );
       }
 
-    void readNpc(zenkit::DaedalusVm& vm, std::shared_ptr<zenkit::INpc>& npc);
+    void readNpc(OgVm& vm, std::shared_ptr<zenkit::INpc>& npc);
 
   private:
     Serialize();

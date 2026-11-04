@@ -1,6 +1,6 @@
 #pragma once
 
-#include <zenkit/DaedalusVm.hh>
+#include "script/ogvm.h"
 #include <zenkit/addon/daedalus.hh>
 
 class FightAi final {
@@ -38,8 +38,8 @@ class FightAi final {
     const FA& operator[](size_t i) const;
 
   private:
-    auto loadAi(zenkit::DaedalusVm &vm, std::string_view name) -> zenkit::IFightAi;
-    FA   loadAi(zenkit::DaedalusVm &vm, size_t id);
+    auto loadAi(OgVm &vm, std::string_view name) -> zenkit::IFightAi;
+    FA   loadAi(OgVm &vm, size_t id);
 
     std::vector<FA> fAi;
   };

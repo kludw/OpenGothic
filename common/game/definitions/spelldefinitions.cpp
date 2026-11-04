@@ -6,7 +6,7 @@
 
 using namespace Tempest;
 
-SpellDefinitions::SpellDefinitions(zenkit::DaedalusVm& vm) : vm(vm) {
+SpellDefinitions::SpellDefinitions(OgVm& vm) : vm(vm) {
   vm.enumerate_instances_by_class_name("C_Spell", [this, &vm](zenkit::DaedalusSymbol& sym){
     spl.push_back(vm.init_instance<zenkit::ISpell>(&sym));
     });

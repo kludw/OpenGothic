@@ -5,7 +5,7 @@
 #include <Tempest/Timer>
 #include <Tempest/Color>
 
-#include <zenkit/DaedalusVm.hh>
+#include "script/ogvm.h"
 #include <zenkit/addon/daedalus.hh>
 
 #include <memory>
@@ -21,9 +21,9 @@ class GthFont;
 
 class GameMenu : public Tempest::Widget {
   public:
-    GameMenu(MenuRoot& owner, KeyCodec& keyCodec, zenkit::DaedalusVm& vm, std::string_view menuSection, KeyCodec::Action keyClose);
+    GameMenu(MenuRoot& owner, KeyCodec& keyCodec, OgVm& vm, std::string_view menuSection, KeyCodec::Action keyClose);
     ~GameMenu() override;
-    void resetVm(zenkit::DaedalusVm* vm);
+    void resetVm(OgVm* vm);
 
     void setPlayer(const Npc& pl);
 
@@ -65,7 +65,7 @@ class GameMenu : public Tempest::Widget {
 
     MenuRoot&                             owner;
     KeyCodec&                             keyCodec;
-    zenkit::DaedalusVm*                   vm = nullptr;
+    OgVm*                   vm = nullptr;
     Tempest::Timer                        timer;
     const Tempest::Texture2d*             up   = nullptr;
     const Tempest::Texture2d*             down = nullptr;

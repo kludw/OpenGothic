@@ -7,7 +7,7 @@
 #include <Tempest/Signal>
 #include <Tempest/Dir>
 
-#include <zenkit/DaedalusVm.hh>
+#include "script/ogvm.h"
 
 #include "game/gamesession.h"
 #include "world/world.h"
@@ -199,10 +199,10 @@ class Gothic final {
     uint32_t                              messageTime   (std::string_view id) const;
 
     static std::u16string                 nestedPath(const std::initializer_list<const char16_t*> &name, Tempest::Dir::FileType type);
-    std::unique_ptr<zenkit::DaedalusVm>   createPhoenixVm(std::string_view datFile, const ScriptLang lang = ScriptLang::NONE);
+    std::unique_ptr<OgVm>   createPhoenixVm(std::string_view datFile, const ScriptLang lang = ScriptLang::NONE);
     zenkit::DaedalusScript                loadScript(std::string_view datFile, const ScriptLang lang);
     void                                  setupCommonScriptClasses(zenkit::DaedalusScript &sc);
-    void                                  setupVmCommonApi(zenkit::DaedalusVm &vm);
+    void                                  setupVmCommonApi(OgVm &vm);
 
     static const FightAi&                 fai();
     static const SoundDefinitions&        sfx();

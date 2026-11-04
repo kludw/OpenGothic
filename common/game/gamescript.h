@@ -1,6 +1,6 @@
 #pragma once
 
-#include <zenkit/DaedalusVm.hh>
+#include "script/ogvm.h"
 #include <zenkit/addon/daedalus.hh>
 #include <zenkit/CutsceneLibrary.hh>
 
@@ -230,7 +230,7 @@ class GameScript final {
 
     bool searchScheme(std::string_view sc, std::string_view listName);
 
-    static zenkit::DaedalusVm createVm(Gothic& gothic);
+    static OgVm createVm(Gothic& gothic);
 
     bool game_initgerman     ();
     bool game_initenglish    ();
@@ -458,7 +458,7 @@ class GameScript final {
     void makeCurrent(Item* w);
 
     GameSession&                                                owner;
-    zenkit::DaedalusVm                                          vm;
+    OgVm                                          vm;
     int32_t                                                     vmLang = -1;
     NpcProcessPolicy                                            aiProcessPolicy = NpcProcessPolicy::AiNormal;
 

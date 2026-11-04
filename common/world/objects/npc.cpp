@@ -117,7 +117,7 @@ struct Npc::TransformBack {
     skeleton = self.visual.visualSkeleton();
     }
 
-  TransformBack(Npc& owner, zenkit::DaedalusVm& vm, Serialize& fin) {
+  TransformBack(Npc& owner, OgVm& vm, Serialize& fin) {
     hnpc           = std::make_shared<zenkit::INpc>();
     hnpc->user_ptr = nullptr;
     fin.readNpc(vm, hnpc);

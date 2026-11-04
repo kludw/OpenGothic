@@ -750,11 +750,11 @@ std::string_view Gothic::menuMain() const {
   return ::menuMain;
   }
 
-std::unique_ptr<zenkit::DaedalusVm> Gothic::createPhoenixVm(std::string_view datFile, const ScriptLang lang) {
+std::unique_ptr<OgVm> Gothic::createPhoenixVm(std::string_view datFile, const ScriptLang lang) {
   auto sc = loadScript(datFile, lang);
   setupCommonScriptClasses(sc);
 
-  auto vm = std::make_unique<zenkit::DaedalusVm>(std::move(sc), zenkit::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
+  auto vm = std::make_unique<OgVm>(std::move(sc), zenkit::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
   setupVmCommonApi(*vm);
   return vm;
   }
@@ -999,7 +999,7 @@ std::u16string Gothic::nestedPath(const std::initializer_list<const char16_t*> &
   return CommandLine::inst().nestedPath(name,type);
   }
 
-void Gothic::setupVmCommonApi(zenkit::DaedalusVm& vm) {
+void Gothic::setupVmCommonApi(OgVm& vm) {
   vm.register_default_external([](std::string_view name) { notImplementedRoutine(std::string {name}); });
 
   if(auto sym = vm.find_symbol_by_name("C_SVM"))
