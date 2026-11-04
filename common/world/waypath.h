@@ -22,4 +22,6 @@ class WayPath final {
 
   private:
     std::vector<const WayPoint*> dat;
+    // opengothic-rs (task 5.13): the og-sim delegation reads and rebuilds paths.
+    friend struct OgSimWaynet;
   };

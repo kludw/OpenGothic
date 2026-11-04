@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <limits>
 
+#include "capi/ogsim.h"
+#include "capi/ogsimwaynet.h"
 #include "utils/dbgpainter.h"
 #include "world/objects/interactive.h"
 #include "world.h"
@@ -77,7 +79,11 @@ const WayPoint *WayMatrix::findWayPoint(const Vec3& at, const std::function<bool
 
 const WayPoint *WayMatrix::findFreePoint(const Vec3& at, std::string_view name, const std::function<bool(const WayPoint&)>& filter) const {
   auto&  index = findFpIndex(name);
-  return findFreePoint(at,index,filter);
+  auto   cpp   = findFreePoint(at,index,filter);
+  // opengothic-rs (task 5.13): see capi/ogsimwaynet.h
+  if(OgSim::on(OG_SIM_MOD_WAYNET))
+    return OgSimWaynet::findFreePoint(*this,at,name,filter,cpp);
+  return cpp;
   }
 
 const WayPoint *WayMatrix::findNextPoint(const Vec3& at) const {
@@ -295,6 +301,14 @@ const WayPoint *WayMatrix::findFreePoint(const Vec3& at, const FpIndex& ind,
   }
 
 WayPath WayMatrix::wayTo(const WayPoint** begin, size_t beginSz, const Tempest::Vec3 exactBegin, const WayPoint& end) const {
+  WayPath cpp = wayToCpp(begin,beginSz,exactBegin,end);
+  // opengothic-rs (task 5.13): see capi/ogsimwaynet.h
+  if(OgSim::on(OG_SIM_MOD_WAYNET))
+    return OgSimWaynet::wayTo(*this,begin,beginSz,exactBegin,end,std::move(cpp));
+  return cpp;
+  }
+
+WayPath WayMatrix::wayToCpp(const WayPoint** begin, size_t beginSz, const Tempest::Vec3 exactBegin, const WayPoint& end) const {
   if(beginSz==0)
     return WayPath();
 

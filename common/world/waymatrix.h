@@ -74,6 +74,10 @@ class WayMatrix final {
     const FpIndex&         findFpIndex(std::string_view name) const;
     // opengothic-rs (task 5.12): the waynet dump reads the private state.
     friend struct OgWaynetDump;
+    // opengothic-rs (task 5.13): the og-sim delegation maps points and reads the owner.
+    friend struct OgSimWaynet;
+    // wayTo's C++ computation; wayTo hands its result to the og-sim delegation.
+    WayPath                wayToCpp(const WayPoint** begin, size_t beginSz, const Tempest::Vec3 exactBegin, const WayPoint& end) const;
     const WayPoint*        findFreePoint(const Tempest::Vec3& at, const FpIndex &ind,
                                          const std::function<bool(const WayPoint&)>& filter) const;
   };

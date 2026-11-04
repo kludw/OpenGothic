@@ -14,8 +14,9 @@
  * time: the main thread, and the loading thread for NEW_GAME/LOADED/STARTED and the
  * startup scripts' Wld_SetTime/Wld_IsTime. rng: any thread (keyed draws come from
  * animation workers when the update is parallel), always under OgRng's lock, so draws
- * reach the table in the order C++ made them; callbacks must not call OgRng. Pointer
- * arguments are non-null and valid for the call only. */
+ * reach the table in the order C++ made them; callbacks must not call OgRng. waynet: the
+ * loading thread (waynet_load) and the main thread; never two at once. Pointer arguments
+ * are non-null (unless documented otherwise) and valid for the call only. */
 
 #pragma once
 
@@ -31,7 +32,8 @@ extern "C" {
 
 #define OG_SIM_MOD_TIME 0  /* gtime, GameSession::tick's clock, Wld_SetTime, Wld_IsTime */
 #define OG_SIM_MOD_RNG  1  /* OgRng: the four named streams (OG_RNG_* in og_capi.h) */
-#define OG_SIM_MODS     2
+#define OG_SIM_MOD_WAYNET 2 /* WayMatrix::wayTo, WayMatrix::findFreePoint, FpLock (5.13) */
+#define OG_SIM_MODS     3
 
 /* GameSession's clock fields. */
 typedef struct og_sim_clock {
@@ -54,6 +56,39 @@ typedef struct og_sim_clock {
 typedef struct og_sim_rng_counters {
   uint64_t draws, keyed_draws, digest, keyed_sum;
   } og_sim_rng_counters;
+
+/* A point of the current world's WayMatrix: which list and the index in it, or one of
+ * the function-local statics startPoint()/deadPoint() fall back to. */
+#define OG_SIM_POINT_NONE          0  /* nullptr */
+#define OG_SIM_POINT_WAY           1  /* wayPoints[index] */
+#define OG_SIM_POINT_FREE          2  /* freePoints[index] */
+#define OG_SIM_POINT_START         3  /* startPoints[index] */
+#define OG_SIM_POINT_DEFAULT_START 4  /* startPoint()'s WayPoint(Vec3(), "START") */
+#define OG_SIM_POINT_DEFAULT_DEAD  5  /* deadPoint()'s WayPoint(Vec3(-1000,-1000,-1000), "TOT") */
+
+typedef struct og_sim_point {
+  uint32_t kind;   /* OG_SIM_POINT_* */
+  uint32_t index;  /* 0 unless WAY/FREE/START */
+  } og_sim_point;
+
+/* DynamicWorld::landRay from a point's position, as buildIndex asked it. */
+typedef struct og_sim_land_ray {
+  float   v[3];     /* the hit, when has_col */
+  int32_t has_col;
+  } og_sim_land_ray;
+
+/* A ladder mob as calculateLadderPoints sees it. */
+typedef struct og_sim_ladder {
+  uint32_t mobsi_id;  /* World::mobsiId */
+  float    bbox[6];   /* bBox()[0].xyz, bBox()[1].xyz */
+  } og_sim_ladder;
+
+/* findFreePoint's filter, run in C++ (the npc ray tests and isLocked): nonzero accepts
+ * the point. Only valid during the waynet_find_free_point call it was passed to. */
+typedef int32_t (*og_sim_point_filter)(void* ctx, og_sim_point p);
+
+/* waynet_way_to's return value: keep the C++ path. */
+#define OG_SIM_KEEP_PATH 0xFFFFFFFFu
 
 typedef struct og_sim_vtable {
   void* user;
@@ -79,6 +114,41 @@ typedef struct og_sim_vtable {
  * all four were accepted. 0 on success; on failure the load fails. */
   int32_t (*rng_load)(void* user, uint32_t stream, uint64_t seed,
                       const og_sim_rng_counters* counters, const char* engine);
+  /* World's constructor right after WayMatrix::buildIndex: the world's file name
+   * (NUL-terminated), the ZEN's bytes as World read them, C++'s point counts, the land
+   * ray of every point (way, then free, then start points, in list order: the order
+   * buildIndex asked them) and the ladders (mobsiById order). The world becomes the
+   * current one; any earlier one is forgotten. Returns 0, or -1 (logged) when Rust
+   * couldn't build the same way net: its calls then answer with C++'s results and count
+   * as mismatches. */
+  int32_t (*waynet_load)(void* user, const char* world, const uint8_t* zen, uint64_t zen_len,
+                         uint32_t way_points, uint32_t free_points, uint32_t start_points,
+                         const og_sim_land_ray* rays, const og_sim_ladder* ladders,
+                         uint32_t ladder_count);
+  /* Start of the current world's destructor: no more calls for it. */
+  void (*waynet_unload)(void* user);
+  /* WayMatrix::wayTo(begin, begin_count, exact_begin, end): `cpp` is C++'s path in pop
+   * order (next point first), `out` has room for `out_cap` points. Returns
+   * OG_SIM_KEEP_PATH, or (USE mode) the number of points written to `out` in pop order. */
+  uint32_t (*waynet_way_to)(void* user, const og_sim_point* begin, uint32_t begin_count,
+                            const float* exact_begin, og_sim_point end,
+                            const og_sim_point* cpp, uint32_t cpp_count,
+                            og_sim_point* out, uint32_t out_cap);
+  /* WayMatrix::findFreePoint(at, name, filter): `name` is `name_len` bytes (not
+   * NUL-terminated, may be empty), `cpp` C++'s answer. Rust calls `filter(ctx, p)` for
+   * its own candidates, in its order. Returns the point to use (Rust's in USE mode). */
+  og_sim_point (*waynet_find_free_point)(void* user, const float* at, const uint8_t* name,
+                                         uint32_t name_len, og_sim_point_filter filter,
+                                         void* ctx, og_sim_point cpp);
+  /* FpLock changed a point's use counter: delta +1 (constructor, load) or -1
+   * (destructor, move assignment); `cpp_count` is C++'s counter after the change. Returns
+   * the counter to use (Rust's in USE mode; C++ adopts it). */
+  uint32_t (*waynet_lock)(void* user, og_sim_point p, int32_t delta, uint32_t cpp_count);
+  /* A mismatch the fork found itself (a query on a point outside the current way net, a
+   * Rust answer it can't map, a filter that threw, a failed load) and logged; `what`
+   * (NUL-terminated) names the call. Rust counts it. Never called during another
+   * waynet callback. */
+  void (*waynet_mismatch)(void* user, const char* what);
   } og_sim_vtable;
 
 /* Registers the table (copied) and the modes before og_init/og_run and before

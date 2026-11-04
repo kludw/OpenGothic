@@ -56,4 +56,6 @@ class WayPoint final {
     std::vector<Conn> conn;
 
   friend class FpLock;
+  // opengothic-rs (task 5.13): adopts the og-sim delegation's use counter.
+  friend struct OgSimWaynet;
   };

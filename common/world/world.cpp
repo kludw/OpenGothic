@@ -23,6 +23,8 @@
 #include "resources.h"
 #include "commandline.h"
 #include "capi/ogwaynet.h"
+#include "capi/ogsim.h"
+#include "capi/ogsimwaynet.h"
 
 const char* materialTag(ItemMaterial src) {
   switch(src) {
@@ -120,6 +122,9 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     // opengothic-rs (task 5.12): see capi/ogwaynet.h
     if(!CommandLine::inst().waynetDump().empty())
       OgWaynetDump::write(*this, *wmatrix, CommandLine::inst().waynetDump(), CommandLine::inst().waynetQueries());
+    // opengothic-rs (task 5.13): see capi/ogsimwaynet.h
+    if(OgSim::on(OG_SIM_MOD_WAYNET))
+      OgSimWaynet::loaded(*this, *wmatrix, *entry);
     loadProgress(100);
     }
   catch(...) {
@@ -129,6 +134,10 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
   }
 
 World::~World() {
+  // opengothic-rs (task 5.13): NPCs' FpLocks die after this (with wobj); their releases
+  // are no longer the delegation's.
+  if(wmatrix!=nullptr && OgSim::on(OG_SIM_MOD_WAYNET))
+    OgSimWaynet::unloaded(*wmatrix);
   }
 
 void World::createPlayer(std::string_view cls) {
