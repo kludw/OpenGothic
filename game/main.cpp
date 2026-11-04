@@ -26,6 +26,7 @@
 #include "commandline.h"
 #include "og_main.h"
 #include "physics/phystrace.h"
+#include "script/scripttrace.h"
 #include "capi/og_capi.h"
 #include "capi/og_capi_internal.h"
 
@@ -202,13 +203,17 @@ struct OgMain::Engine {
     if(!cmd.physicsTrace().empty())
       PhysTrace::open(std::string(cmd.physicsTrace()));
     try {
+      // opengothic-rs (task 4.13): before setupGlobalScripts creates the first VM.
+      if(!cmd.scriptTrace().empty())
+        ScriptTrace::open(std::string(cmd.scriptTrace()));
       gothic.setupGlobalScripts();
       wx.emplace(device);
       app.emplace();
       }
     catch(...) {
-      // No shutdown follows a failed init: close (and report) the trace here.
+      // No shutdown follows a failed init: close (and report) the traces here.
       PhysTrace::close();
+      ScriptTrace::stop("init failed");
       throw;
       }
     }
@@ -232,14 +237,14 @@ MainWindow& OgMain::window(Engine& e) {
 void OgMain::shutdown(Engine* e) {
   // After the engine (also if destroying it throws): worlds destroyed with it still write
   // their records.
-  struct TraceCloser { ~TraceCloser(){ PhysTrace::close(); } } closer;
+  struct TraceCloser { ~TraceCloser(){ PhysTrace::close(); ScriptTrace::stop("shutdown"); } } closer;
   delete e;
   }
 
 int og_main(int argc,const char** argv) {
   // Closes the physics trace after the engine, also when exec() throws (declared first,
   // destroyed last).
-  struct TraceCloser { ~TraceCloser(){ PhysTrace::close(); } } closer;
+  struct TraceCloser { ~TraceCloser(){ PhysTrace::close(); ScriptTrace::stop("shutdown"); } } closer;
   std::unique_ptr<OgMain::Engine> e{OgMain::init(argc,argv)};
   return e->app->exec();
   }

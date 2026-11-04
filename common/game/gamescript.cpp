@@ -1472,7 +1472,7 @@ OgVm GameScript::createVm(Gothic& gothic) {
   if(DirectMemory::isRequired(script)) {
     exef |= zenkit::DaedalusVmExecutionFlag::IGNORE_CONST_SPECIFIER;
     }
-  return OgVm(std::move(script), exef);
+  return OgVm(std::move(script), exef, std::string(gothic.defaultGameDatFile()));
   }
 
 bool GameScript::hasSymbolName(std::string_view name) {

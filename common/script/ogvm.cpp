@@ -1,7 +1,8 @@
 #include "ogvm.h"
 
-OgVm::OgVm(zenkit::DaedalusScript&& script, uint8_t flags)
-  : zk(std::make_unique<Zk>(std::move(script), flags)) {
+OgVm::OgVm(zenkit::DaedalusScript&& script, uint8_t flags, std::string name)
+  : zk(std::make_unique<Zk>(std::move(script), flags)), vmName(std::move(name)) {
+  ScriptTrace::vm(*zk, vmName, zk->symbols().size());
   }
 
 OgVm::OgVm(OgVm&&) noexcept = default;

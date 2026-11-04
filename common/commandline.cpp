@@ -165,6 +165,13 @@ CommandLine::CommandLine(int argc, const char** argv) {
         throw std::runtime_error("--physics-trace needs a path");
       physTrace = argv[i];
       }
+    else if(arg=="--script-trace") {
+      // opengothic-rs (task 4.13): see common/script/scripttrace.h
+      ++i;
+      if(i>=argc)
+        throw std::runtime_error("--script-trace needs a path");
+      scrTrace = argv[i];
+      }
     else {
       Log::i("unrecognized commandline option: \"", arg, "\"");
       }

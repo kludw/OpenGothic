@@ -16,6 +16,7 @@
 #include "camera.h"
 #include "gothic.h"
 #include "capi/ogrng.h"
+#include "script/scripttrace.h"
 
 using namespace Tempest;
 
@@ -339,6 +340,9 @@ uint64_t GameSession::ogSimTime(uint32_t op, int64_t a, int64_t b, float f, uint
   }
 
 void GameSession::tick(uint64_t dt) {
+  // opengothic-rs (task 4.13): the script trace covers start-up and world load only.
+  if(ScriptTrace::active())
+    ScriptTrace::stop("first simulation tick");
   wrld->scaleTime(dt);
   const uint64_t scaled = dt;
 

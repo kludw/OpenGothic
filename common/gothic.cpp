@@ -754,7 +754,7 @@ std::unique_ptr<OgVm> Gothic::createPhoenixVm(std::string_view datFile, const Sc
   auto sc = loadScript(datFile, lang);
   setupCommonScriptClasses(sc);
 
-  auto vm = std::make_unique<OgVm>(std::move(sc), zenkit::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
+  auto vm = std::make_unique<OgVm>(std::move(sc), zenkit::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS, std::string(datFile));
   setupVmCommonApi(*vm);
   return vm;
   }

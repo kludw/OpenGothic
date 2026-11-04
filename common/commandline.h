@@ -50,11 +50,14 @@ class CommandLine {
     std::string_view    defaultSave()      const { return saveDef;    }
     // opengothic-rs (task 6.2): `--physics-trace <path>`, empty without the flag.
     std::string_view    physicsTrace()     const { return physTrace;  }
+    // opengothic-rs (task 4.13): `--script-trace <path>`, empty without the flag.
+    std::string_view    scriptTrace()      const { return scrTrace;   }
 
     std::string         wrldDef;
 
   private:
     std::string         physTrace;
+    std::string         scrTrace;
 
     bool                validateGothicPath() const;
 
