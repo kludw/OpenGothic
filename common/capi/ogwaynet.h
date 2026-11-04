@@ -7,7 +7,8 @@
 // ground positions, ladders and connections, edges, index orders, start/dead point),
 // and the answer to each line of `--waynet-queries <path>`. Text lines; floats are their
 // IEEE bits as 8 hex digits, names are hex bytes ("-" for empty). The format is read by
-// crates/og-parity/src/sim_waynet.rs, which documents it.
+// crates/og-parity/src/sim_waynet.rs, which documents it. Task 5.13 added the `way`
+// (WayMatrix::wayTo, called in sequence) and `lock`/`unlock` (FpLock) query lines.
 
 #include <string_view>
 

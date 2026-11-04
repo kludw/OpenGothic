@@ -2,6 +2,7 @@
 
 #include <Tempest/Log>
 
+#include <algorithm>
 #include <cinttypes>
 #include <cstdio>
 #include <cstring>
@@ -12,6 +13,7 @@
 #include <string>
 
 #include "world/objects/interactive.h"
+#include "world/fplock.h"
 #include "world/waymatrix.h"
 #include "world/world.h"
 
@@ -152,6 +154,23 @@ void OgWaynetDump::write(World& world, const WayMatrix& m, std::string_view dump
   w.out << "start " << ref(start) << "\n";
   w.out << "dead " << ref(dead) << "\n";
 
+  // The way queries' inverse of ref(); "S" isn't resolved (queries never name it).
+  auto deref = [&](const std::string& s) -> const WayPoint* {
+    const std::vector<WayPoint>* sets[3] = {&m.wayPoints, &m.freePoints, &m.startPoints};
+    const char kinds[3] = {'w', 'f', 's'};
+    for(int k=0; k<3; ++k) {
+      if(s.size()<2 || s[0]!=kinds[k] || s.find_first_not_of("0123456789",1)!=std::string::npos)
+        continue;
+      size_t i = std::stoul(s.substr(1));
+      if(i>=sets[k]->size())
+        fail("point " + s + " is out of range");
+      return &(*sets[k])[i];
+      }
+    fail("bad point \"" + s + "\"");
+    };
+  // Locks taken by `lock` lines, released by `unlock` lines (FpLock's destructor).
+  std::vector<std::pair<const WayPoint*,FpLock>> held;
+
   size_t queries = 0;
   if(!queriesPath.empty()) {
     std::ifstream in{std::string(queriesPath)};
@@ -176,6 +195,39 @@ void OgWaynetDump::write(World& world, const WayMatrix& m, std::string_view dump
         r = world.findPoint(unhexName(a), b=="1");
       else if(op=="wpname" && !a.empty())
         r = world.findWayPoint(unhexName(a));
+      else if(op=="way" && !d.empty()) {
+        // way <exact> <end> <begin>...: m.wayTo directly, so its pathGen state carries
+        // from one line to the next as in the game. Answer: the path in pop order.
+        const WayPoint* end = deref(d);
+        std::vector<const WayPoint*> begin;
+        std::string b0;
+        while(ls >> b0)
+          begin.push_back(deref(b0));
+        WayPath path = m.wayTo(begin.data(), begin.size(), pos(), *end);
+        w.out << "q";
+        if(path.first()==nullptr)
+          w.out << " -";
+        while(path.first()!=nullptr)
+          w.out << " " << ref(path.pop());
+        w.out << "\n";
+        ++queries;
+        continue;
+        }
+      else if((op=="lock" || op=="unlock") && !a.empty() && b.empty()) {
+        // Answer: the point's use counter afterwards.
+        const WayPoint* p = deref(a);
+        if(op=="lock") {
+          held.emplace_back(p, FpLock(*p));
+          } else {
+          auto it = std::find_if(held.begin(), held.end(), [p](auto& h){ return h.first==p; });
+          if(it==held.end())
+            fail("unlock of " + a + " which no lock line holds");
+          held.erase(it);
+          }
+        w.out << "q " << p->useCounter() << "\n";
+        ++queries;
+        continue;
+        }
       else
         fail("bad query line " + std::to_string(queries+1) + ": \"" + line + "\"");
       w.out << "q " << ref(r) << "\n";
