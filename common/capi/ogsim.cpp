@@ -29,7 +29,10 @@ extern "C" int32_t og_sim_set(const og_sim_vtable* vt, const uint8_t* m) {
   if(!vt->time || !vt->is_time || !vt->rng_seed || !vt->rng_next || !vt->rng_keyed ||
      !vt->rng_info || !vt->rng_load || !vt->waynet_load || !vt->waynet_unload ||
      !vt->waynet_way_to || !vt->waynet_find_free_point || !vt->waynet_lock ||
-     !vt->waynet_mismatch) {
+     !vt->waynet_mismatch || !vt->routine_npc || !vt->routine_current ||
+     !vt->routine_end_time || !vt->routine_mob_set || !vt->routine_mob_load ||
+     !vt->routine_mob_drop || !vt->routine_mob_tick || !vt->routine_mob_reset ||
+     !vt->routine_mob_scheme_state || !vt->routine_mismatch) {
     Log::e("og_sim_set: table with a missing callback");
     return -1;
     }
@@ -37,7 +40,7 @@ extern "C" int32_t og_sim_set(const og_sim_vtable* vt, const uint8_t* m) {
   for(uint32_t i=0; i<OG_SIM_MODS; ++i)
     modes[i] = m[i];
   Log::i("og_sim: time mode ",int(modes[OG_SIM_MOD_TIME]),", rng mode ",int(modes[OG_SIM_MOD_RNG]),
-         ", waynet mode ",int(modes[OG_SIM_MOD_WAYNET]));
+         ", waynet mode ",int(modes[OG_SIM_MOD_WAYNET]),", routine mode ",int(modes[OG_SIM_MOD_ROUTINE]));
   return 0;
   }
 

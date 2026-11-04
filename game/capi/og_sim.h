@@ -15,8 +15,10 @@
  * startup scripts' Wld_SetTime/Wld_IsTime. rng: any thread (keyed draws come from
  * animation workers when the update is parallel), always under OgRng's lock, so draws
  * reach the table in the order C++ made them; callbacks must not call OgRng. waynet: the
- * loading thread (waynet_load) and the main thread; never two at once. Pointer arguments
- * are non-null (unless documented otherwise) and valid for the call only. */
+ * loading thread (waynet_load) and the main thread; never two at once. routine: the
+ * loading thread (startup scripts' TA_ and Wld_SetMobRoutine calls, save loading) and the main
+ * thread; never two at once. Pointer arguments are non-null (unless documented otherwise)
+ * and valid for the call only. */
 
 #pragma once
 
@@ -33,7 +35,8 @@ extern "C" {
 #define OG_SIM_MOD_TIME 0  /* gtime, GameSession::tick's clock, Wld_SetTime, Wld_IsTime */
 #define OG_SIM_MOD_RNG  1  /* OgRng: the four named streams (OG_RNG_* in og_capi.h) */
 #define OG_SIM_MOD_WAYNET 2 /* WayMatrix::wayTo, WayMatrix::findFreePoint, FpLock (5.13) */
-#define OG_SIM_MODS     3
+#define OG_SIM_MOD_ROUTINE 3 /* Npc routine tables, WorldObjects mob routines (5.14) */
+#define OG_SIM_MODS     4
 
 /* GameSession's clock fields. */
 typedef struct og_sim_clock {
@@ -65,6 +68,8 @@ typedef struct og_sim_rng_counters {
 #define OG_SIM_POINT_START         3  /* startPoints[index] */
 #define OG_SIM_POINT_DEFAULT_START 4  /* startPoint()'s WayPoint(Vec3(), "START") */
 #define OG_SIM_POINT_DEFAULT_DEAD  5  /* deadPoint()'s WayPoint(Vec3(-1000,-1000,-1000), "TOT") */
+#define OG_SIM_POINT_UNMAPPED      6  /* routines only: a point the NPC's world's matrix
+                                         doesn't hold (the fork logs and counts it) */
 
 typedef struct og_sim_point {
   uint32_t kind;   /* OG_SIM_POINT_* */
@@ -86,6 +91,49 @@ typedef struct og_sim_ladder {
 /* findFreePoint's filter, run in C++ (the npc ray tests and isLocked): nonzero accepts
  * the point. Only valid during the waynet_find_free_point call it was passed to. */
 typedef int32_t (*og_sim_point_filter)(void* ctx, og_sim_point p);
+
+/* One Npc::Routine. */
+typedef struct og_sim_routine {
+  int64_t        start;     /* gtime ms */
+  int64_t        end;
+  uint64_t       callback;  /* ScriptFn::ptr; UINT64_MAX = invalid */
+  og_sim_point   point;     /* in the NPC's world's matrix; OG_SIM_POINT_NONE = unresolved */
+  const uint8_t* name;      /* ADD: TA_Min's way point name; LOAD: fallbackName. Not */
+  uint32_t       name_len;  /* NUL-terminated, may be empty (name then may be NULL). */
+  } og_sim_routine;
+
+/* routine_npc's op. */
+#define OG_SIM_ROUTINE_ADD   0  /* Npc::addRoutine: rows[0], count 1 */
+#define OG_SIM_ROUTINE_CLEAR 1  /* Npc::excRoutine's routines.clear(): count 0 */
+#define OG_SIM_ROUTINE_LOAD  2  /* Npc::loadAiState: the table as read, in order */
+#define OG_SIM_ROUTINE_DROP  3  /* ~Npc: count 0 */
+
+/* routine_current's op and its special indices. */
+#define OG_SIM_ROUTINE_CURRENT    0  /* currentRoutine(false) */
+#define OG_SIM_ROUTINE_CURRENT_WP 1  /* currentRoutine(true) */
+#define OG_SIM_ROUTINE_TA_POINT   2  /* currentTaPoint: the routine whose point it is */
+#define OG_SIM_ROUTINE_EMPTY     (-1) /* currentRoutine's static empty routine */
+#define OG_SIM_ROUTINE_NPC_WP    (-2) /* TA_POINT with no routines: findPoint(npc wp) */
+
+typedef struct og_sim_mob_routine {
+  int64_t time;   /* gtime ms */
+  int32_t state;
+  } og_sim_mob_routine;
+
+/* One WorldObjects::MobStates as a save holds it. */
+typedef struct og_sim_mob_states {
+  const uint8_t*            scheme;
+  uint32_t                  scheme_len;
+  int32_t                   cur_state;
+  const og_sim_mob_routine* routines;
+  uint32_t                  count;
+  } og_sim_mob_states;
+
+/* A scheme (index in WorldObjects::routines) whose state changed. */
+typedef struct og_sim_mob_change {
+  uint32_t scheme;
+  int32_t  state;
+  } og_sim_mob_change;
 
 /* waynet_way_to's return value: keep the C++ path. */
 #define OG_SIM_KEEP_PATH 0xFFFFFFFFu
@@ -149,6 +197,48 @@ typedef struct og_sim_vtable {
    * (NUL-terminated) names the call. Rust counts it. Never called during another
    * waynet callback. */
   void (*waynet_mismatch)(void* user, const char* what);
+  /* An NPC's routine table changed (OG_SIM_ROUTINE_ADD/CLEAR/LOAD/DROP). `npc` is a key
+   * (the Npc's address) valid until DROP. */
+  void (*routine_npc)(void* user, uint64_t npc, uint32_t op, const og_sim_routine* rows,
+                      uint32_t count);
+  /* currentRoutine/currentTaPoint at world time `now` (ms): `cpp` is C++'s answer as an
+   * index into the NPC's table (or OG_SIM_ROUTINE_EMPTY/NPC_WP), `cpp_routine` that row
+   * (NULL for the special indices). Returns the index to use (Rust's in USE mode). */
+  int64_t (*routine_current)(void* user, uint64_t npc, uint32_t op, int64_t now, int64_t cpp,
+                             const og_sim_routine* cpp_routine);
+  /* Npc::endTime of a routine running from `start` to `end` at `now`; returns the end
+   * time to use (ms). */
+  int64_t (*routine_end_time)(void* user, int64_t start, int64_t end, int64_t now, int64_t cpp);
+  /* WorldObjects::setMobRoutine of the world `world` (a key valid until routine_mob_drop):
+   * `scheme` is `scheme_len` bytes, not NUL-terminated. */
+  void (*routine_mob_set)(void* user, uint64_t world, int64_t time, const uint8_t* scheme,
+                          uint32_t scheme_len, int32_t state);
+  /* WorldObjects::load read the mob tables: they replace the world's. */
+  void (*routine_mob_load)(void* user, uint64_t world, const og_sim_mob_states* states,
+                           uint32_t count);
+  /* ~WorldObjects. */
+  void (*routine_mob_drop)(void* user, uint64_t world);
+  /* WorldObjects::tick's mob check at `now`: `cpp` the schemes whose state C++ changed (in
+   * table order; C++ updated its curState). Rust writes its changes to `out` (room for
+   * `out_cap`, the number of schemes) and returns their count; C++ applies them with
+   * setMobState in USE mode, its own otherwise. A count above `out_cap` (Rust returns
+   * UINT32_MAX when its changes don't fit) or a scheme index outside the table makes C++
+   * apply its own changes and report the mismatch through routine_mismatch. */
+  uint32_t (*routine_mob_tick)(void* user, uint64_t world, int64_t now,
+                               const og_sim_mob_change* cpp, uint32_t cpp_count,
+                               og_sim_mob_change* out, uint32_t out_cap);
+  /* resetPositionToTA set every scheme's curState to its state at `now`: `cpp_states` are
+   * C++'s, one per scheme in table order. */
+  void (*routine_mob_reset)(void* user, uint64_t world, int64_t now, const int32_t* cpp_states,
+                            uint32_t count);
+  /* The state resetPositionToTA hands an interactive with scheme `scheme`; returns the
+   * state to use. */
+  int32_t (*routine_mob_scheme_state)(void* user, uint64_t world, const uint8_t* scheme,
+                                      uint32_t scheme_len, int32_t cpp);
+  /* A mismatch the fork found itself (an unmapped point, an index Rust returned that the
+   * table doesn't have) and logged; `what` names the call. Rust counts it. Never called
+   * during another routine callback. */
+  void (*routine_mismatch)(void* user, const char* what);
   } og_sim_vtable;
 
 /* Registers the table (copied) and the modes before og_init/og_run and before

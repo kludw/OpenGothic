@@ -21,6 +21,8 @@
 #include "gothic.h"
 #include "resources.h"
 #include "capi/ogroutine.h"
+#include "capi/ogsim.h"
+#include "capi/ogsimroutine.h"
 
 using namespace Tempest;
 
@@ -206,6 +208,8 @@ Npc::Npc(World &owner, size_t instance, std::string_view waypoint, NpcProcessPol
   }
 
 Npc::~Npc(){
+  if(OgSim::on(OG_SIM_MOD_ROUTINE)) // opengothic-rs (task 5.14 part 2)
+    OgSimRoutine::dropped(*this);
   if(currentInteract)
     currentInteract->detach(*this,true);
   }
@@ -377,6 +381,8 @@ void Npc::loadAiState(Serialize& fin) {
     if(fin.version()>51)
       fin.read(i.fallbackName);
     }
+  if(OgSim::on(OG_SIM_MOD_ROUTINE)) // opengothic-rs (task 5.14 part 2)
+    OgSimRoutine::loaded(*this);
   }
 
 void Npc::saveTrState(Serialize& fout) const {
@@ -3252,6 +3258,30 @@ const Npc::Routine& Npc::currentRoutine(bool assertWp) const {
   }
 
 const Npc::Routine& Npc::currentRoutineAt(gtime wtime, bool assertWp) const {
+  auto& cpp = currentRoutineCpp(wtime,assertWp);
+  if(!OgSim::on(OG_SIM_MOD_ROUTINE))
+    return cpp;
+  // opengothic-rs (task 5.14 part 2)
+  const uint32_t op = assertWp ? OG_SIM_ROUTINE_CURRENT_WP : OG_SIM_ROUTINE_CURRENT;
+  return routineAt(OgSimRoutine::current(*this,op,wtime,routineIndex(cpp)));
+  }
+
+const Npc::Routine& Npc::routineAt(int64_t i) const {
+  static Routine r;
+  if(i<0 || uint64_t(i)>=routines.size())
+    return r;
+  return routines[size_t(i)];
+  }
+
+int64_t Npc::routineIndex(const Routine& r) const {
+  // std::less: the static empty routine is unrelated to the table's storage.
+  std::less<const Routine*> lt;
+  if(routines.empty() || lt(&r,routines.data()) || !lt(&r,routines.data()+routines.size()))
+    return OG_SIM_ROUTINE_EMPTY;
+  return int64_t(&r-routines.data());
+  }
+
+const Npc::Routine& Npc::currentRoutineCpp(gtime wtime, bool assertWp) const {
   // find routine for current time
   // if there is no such routine search counter clock-wise until one is found
   auto time = wtime.timeInDay();
@@ -3282,8 +3312,7 @@ const Npc::Routine& Npc::currentRoutineAt(gtime wtime, bool assertWp) const {
 
   if(rtn!=nullptr)
     return *rtn;
-  static Routine r;
-  return r;
+  return routineAt(OG_SIM_ROUTINE_EMPTY);
   }
 
 const WayPoint* Npc::currentTaPoint() const {
@@ -3291,9 +3320,18 @@ const WayPoint* Npc::currentTaPoint() const {
   }
 
 const WayPoint* Npc::currentTaPointAt(gtime wtime) const {
-  if(routines.empty())
+  if(!OgSim::on(OG_SIM_MOD_ROUTINE)) {
+    if(routines.empty())
+      return owner.findPoint(hnpc->wp,false);
+    return currentRoutineCpp(wtime,true).point;
+    }
+  // opengothic-rs (task 5.14 part 2)
+  const int64_t cpp = routines.empty() ? OG_SIM_ROUTINE_NPC_WP
+                                       : routineIndex(currentRoutineCpp(wtime,true));
+  const int64_t i   = OgSimRoutine::current(*this,OG_SIM_ROUTINE_TA_POINT,wtime,cpp);
+  if(i==OG_SIM_ROUTINE_NPC_WP)
     return owner.findPoint(hnpc->wp,false);
-  return currentRoutineAt(wtime,true).point;
+  return routineAt(i).point;
   }
 
 gtime Npc::endTime(const Npc::Routine &r) const {
@@ -3301,6 +3339,13 @@ gtime Npc::endTime(const Npc::Routine &r) const {
   }
 
 gtime Npc::endTimeAt(gtime wtime, const Npc::Routine &r) const {
+  auto cpp = endTimeCpp(wtime,r);
+  if(!OgSim::on(OG_SIM_MOD_ROUTINE))
+    return cpp;
+  return OgSimRoutine::endTime(r.start,r.end,wtime,cpp); // opengothic-rs (task 5.14 part 2)
+  }
+
+gtime Npc::endTimeCpp(gtime wtime, const Npc::Routine &r) const {
   auto time  = wtime.timeInDay();
 
   //NOTE: should we consider time extension for invalid routine sequences?
@@ -4361,6 +4406,8 @@ void Npc::setStateTime(int64_t time) {
 void Npc::addRoutine(gtime s, gtime e, uint32_t callback, std::string_view point) {
   auto wp = world().findPoint(point,false);
   OgRoutineDump::added(*this, s, e, callback, point, wp); // opengothic-rs (task 5.14)
+  if(OgSim::on(OG_SIM_MOD_ROUTINE)) // opengothic-rs (task 5.14 part 2)
+    OgSimRoutine::added(*this, s, e, callback, point, wp);
 
   Routine r;
   r.start    = s;
@@ -4379,6 +4426,8 @@ void Npc::addRoutine(gtime s, gtime e, uint32_t callback, std::string_view point
 void Npc::excRoutine(size_t callback) {
   OgRoutineDump::exchanged(*this, callback); // opengothic-rs (task 5.14)
   routines.clear();
+  if(OgSim::on(OG_SIM_MOD_ROUTINE)) // opengothic-rs (task 5.14 part 2)
+    OgSimRoutine::cleared(*this);
   owner.script().invokeState(this,currentOther,currentVictim,callback);
   // aiState.eTime = gtime();
   }

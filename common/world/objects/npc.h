@@ -501,6 +501,13 @@ class Npc final {
     auto      currentRoutineAt(gtime wtime, bool assertWp) const -> const Routine&;
     gtime     endTimeAt(gtime wtime, const Routine& r) const;
     auto      currentTaPointAt(gtime wtime) const -> const WayPoint*;
+    // opengothic-rs (task 5.14 part 2): currentRoutineAt's stock body (no og-sim hook),
+    // the row an og-sim index names (the static empty routine outside the table) and the
+    // inverse (OG_SIM_ROUTINE_EMPTY for the empty routine).
+    auto      currentRoutineCpp(gtime wtime, bool assertWp) const -> const Routine&;
+    auto      routineAt(int64_t i) const -> const Routine&;
+    int64_t   routineIndex(const Routine& r) const;
+    gtime     endTimeCpp(gtime wtime, const Routine& r) const;
 
     bool      implPointAt(const Tempest::Vec3& to);
     bool      implLookAtWp(uint64_t dt);
@@ -659,4 +666,5 @@ class Npc final {
 
   friend class MoveAlgo;
   friend struct OgRoutineDump;
+  friend struct OgSimRoutine; // opengothic-rs (task 5.14 part 2)
   };

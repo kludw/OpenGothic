@@ -17,6 +17,8 @@
 #include "gothic.h"
 #include "capi/oghooks.h"
 #include "capi/ogroutine.h"
+#include "capi/ogsim.h"
+#include "capi/ogsimroutine.h"
 
 #include <Tempest/Painter>
 #include <Tempest/Application>
@@ -64,6 +66,8 @@ WorldObjects::WorldObjects(World& owner):owner(owner){
   }
 
 WorldObjects::~WorldObjects() {
+  if(OgSim::on(OG_SIM_MOD_ROUTINE)) // opengothic-rs (task 5.14 part 2)
+    OgSimRoutine::mobDropped(*this);
   }
 
 void WorldObjects::load(Serialize &fin) {
@@ -115,6 +119,8 @@ void WorldObjects::load(Serialize &fin) {
   routines.resize(sz);
   for(auto& i:routines)
     i.load(fin);
+  if(OgSim::on(OG_SIM_MOD_ROUTINE)) // opengothic-rs (task 5.14 part 2)
+    OgSimRoutine::mobLoaded(*this);
 
   for(auto& i:interactiveObj)
     i->postValidate();
@@ -182,11 +188,15 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
     npc.tick(d);
     }
 
-  for(auto& i:routines) {
-    auto s = i.stateByTime(owner.time());
-    if(s!=i.curState) {
-      setMobState(i.scheme,s);
-      i.curState = s;
+  if(OgSim::on(OG_SIM_MOD_ROUTINE)) {
+    OgSimRoutine::mobTick(*this); // opengothic-rs (task 5.14 part 2)
+    } else {
+    for(auto& i:routines) {
+      auto s = i.stateByTime(owner.time());
+      if(s!=i.curState) {
+        setMobState(i.scheme,s);
+        i.curState = s;
+        }
       }
     }
 
@@ -901,6 +911,8 @@ Interactive *WorldObjects::availableMob(const Npc &pl, std::string_view dest) {
 
 void WorldObjects::setMobRoutine(gtime time, std::string_view scheme, int32_t state) {
   OgRoutineDump::mobRoutine(time, scheme, state); // opengothic-rs (task 5.14)
+  if(OgSim::on(OG_SIM_MOD_ROUTINE)) // opengothic-rs (task 5.14 part 2)
+    OgSimRoutine::mobSet(*this, time, scheme, state);
   MobRoutine r;
   r.time  = time;
   r.state = state;
@@ -1009,6 +1021,10 @@ void WorldObjects::resetPositionToTA() {
       npc.setPosition(point.position());
       npc.updateTransform();
       }
+    }
+  if(OgSim::on(OG_SIM_MOD_ROUTINE)) {
+    OgSimRoutine::mobReset(*this); // opengothic-rs (task 5.14 part 2)
+    return;
     }
   for(auto& i:routines) {
     auto s = i.stateByTime(owner.time());
