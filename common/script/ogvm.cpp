@@ -206,7 +206,7 @@ class OgVm::Rust final {
         values += (i==0 ? "" : ",") + traceValue(args[i]);
       values += "]";
       // Same event as OgVm::tracedExternal writes for an engine callback.
-      ScriptTrace::Ext trace(owner->vmName, sym->name(), std::move(values));
+      ScriptTrace::Ext trace(*owner->zk, owner->vmName, sym->name(), std::move(values));
       if(!threw)
         trace.ret(ret!=nullptr ? traceValue(*ret) : "null");
       }
@@ -415,6 +415,8 @@ OgVm& OgVm::operator=(OgVm&& other) noexcept {
     return *this;
   if(rust!=nullptr)
     backend.destroy(backend.user, rust->vm);
+  if(zk!=nullptr)
+    ScriptTrace::vmGone(*zk);
   zk              = std::move(other.zk);
   vmName          = std::move(other.vmName);
   externals       = std::move(other.externals);
@@ -429,6 +431,8 @@ OgVm::~OgVm() {
   // The backend goes first: it may still hold handles the bridge pins.
   if(rust!=nullptr)
     backend.destroy(backend.user, rust->vm);
+  if(zk!=nullptr)
+    ScriptTrace::vmGone(*zk);
   }
 
 const OgVm::External* OgVm::external(std::string_view name) const {
@@ -603,6 +607,19 @@ extern "C" int32_t og_script_global_set(og_script_host* host, uint32_t symbol, u
 
 extern "C" int32_t og_script_tracing(void) {
   return ScriptTrace::active() ? 1 : 0;
+  }
+
+extern "C" void og_script_trace_mark(uint64_t action, const char* tool, size_t toolLen) {
+  // Called from Rust: nothing may unwind out.
+  try {
+    ScriptTrace::mark(action, std::string_view(tool, toolLen));
+    }
+  catch(const std::exception& e) {
+    Tempest::Log::e("script trace: mark of action ", action, " failed: ", e.what());
+    }
+  catch(...) {
+    Tempest::Log::e("script trace: mark of action ", action, " failed");
+    }
   }
 
 extern "C" int32_t og_script_trace_external(og_script_host* host, const char* name, size_t nameLen,

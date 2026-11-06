@@ -166,6 +166,10 @@ int32_t og_script_tracing(void);
 int32_t og_script_trace_external(og_script_host* host, const char* name, size_t name_len,
                                  const og_script_value* args, size_t count, const og_script_value* ret,
                                  int32_t threw, char* err, size_t err_len);
+/* Task 4.18: marks the start of recorded action `action` (the MCP call number) running tool
+ * `tool` (raw bytes) in a gameplay script trace (`--script-trace-gameplay`), so a replay names
+ * the action a divergence happened in. A no-op otherwise. Any thread; no backend needed. */
+void og_script_trace_mark(uint64_t action, const char* tool, size_t tool_len);
 
 /* --- Test support (seam tests without a running game) --- */
 

@@ -206,7 +206,7 @@ struct OgMain::Engine {
     try {
       // opengothic-rs (task 4.13): before setupGlobalScripts creates the first VM.
       if(!cmd.scriptTrace().empty())
-        ScriptTrace::open(std::string(cmd.scriptTrace()));
+        ScriptTrace::open(std::string(cmd.scriptTrace()), cmd.scriptTraceGameplay());
       // opengothic-rs (task 4.14): likewise before the first VM.
       if(!cmd.scriptDump().empty())
         OgVm::openDump(std::string(cmd.scriptDump()));
