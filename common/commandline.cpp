@@ -172,6 +172,10 @@ CommandLine::CommandLine(int argc, const char** argv) {
         throw std::runtime_error("--script-trace needs a path");
       scrTrace = argv[i];
       }
+    else if(arg=="--script-trace-gameplay") {
+      // opengothic-rs (task 4.18): see common/script/scripttrace.h
+      scrTraceGameplay = true;
+      }
     else if(arg=="--waynet-dump" || arg=="--waynet-queries") {
       // opengothic-rs (task 5.12): see common/capi/ogwaynet.h
       ++i;

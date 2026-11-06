@@ -71,7 +71,7 @@ class OgVm final {
       auto* s = symbolOf(sym);
       if(!ScriptTrace::active())
         return callOn<R>(s, args...);
-      ScriptTrace::Entry entry(*zk, vmName, "call", s, ScriptTrace::values(*zk, args...));
+      ScriptTrace::Entry entry(*zk, vmName, "call", s, ScriptTrace::values(*zk, args...), nullptr, ScriptTrace::returnKind<R>());
       return traced(entry, [&]() -> R { return callOn<R>(s, args...); });
       }
 
@@ -94,7 +94,12 @@ class OgVm final {
         initOn<T>(instance, s);
         } else {
         ScriptTrace::created(*zk, instance);
-        ScriptTrace::Entry entry(*zk, vmName, "init", s, "[]");
+        // Gameplay trace (task 4.18): ZenKit's init_instance starts with this same allocate_instance
+        // (it only binds and types the instance), done here first so the entry's sync can read the
+        // C++ defaults of the instance's members before its code runs.
+        if(ScriptTrace::gameplay())
+          zk->template allocate_instance<T>(instance, mutableSymbol(s));
+        ScriptTrace::Entry entry(*zk, vmName, "init", s, "[]", instance.get());
         traced(entry, [&]() { initOn<T>(instance, s); return instance; });
         }
       dump(*instance, s);
@@ -139,7 +144,7 @@ class OgVm final {
         }
       // Runs no script code, but it binds the instance to its symbol: a replay must do it too.
       ScriptTrace::created(*zk, instance);
-      ScriptTrace::Entry entry(*zk, vmName, "allocate", s, "[]");
+      ScriptTrace::Entry entry(*zk, vmName, "allocate", s, "[]", instance.get());
       traced(entry, bind);
       }
 
@@ -176,10 +181,10 @@ class OgVm final {
         backendBindDefault();
       if(!ScriptTrace::active())
         return zk->register_default_external(std::function<void(std::string_view)>(cb));
-      zk->register_default_external(std::function<void(std::string_view)>([name = vmName, cb](std::string_view ext) {
+      zk->register_default_external(std::function<void(std::string_view)>([machine = zk.get(), name = vmName, cb](std::string_view ext) {
         if(!ScriptTrace::active())
           return cb(ext);
-        ScriptTrace::Ext trace(name, ext, "[]", true);
+        ScriptTrace::Ext trace(*machine, name, ext, "[]", true);
         cb(ext);
         trace.ret("null");
         }));
@@ -353,7 +358,7 @@ class OgVm final {
       return [machine, name = vmName, symbol = sym!=nullptr ? sym->name() : std::string(ext), callback](P... args) -> R {
         if(!ScriptTrace::active())
           return callback(args...);
-        ScriptTrace::Ext trace(name, symbol, ScriptTrace::values(*machine, args...));
+        ScriptTrace::Ext trace(*machine, name, symbol, ScriptTrace::values(*machine, args...));
         if constexpr (std::is_void_v<R>) {
           callback(args...);
           trace.ret("null");

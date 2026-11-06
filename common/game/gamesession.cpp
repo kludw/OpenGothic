@@ -346,8 +346,11 @@ uint64_t GameSession::ogSimTime(uint32_t op, int64_t a, int64_t b, float f, uint
   }
 
 void GameSession::tick(uint64_t dt) {
-  // opengothic-rs (task 4.13): the script trace covers start-up and world load only.
-  if(ScriptTrace::active())
+  // opengothic-rs (task 4.13): the script trace covers start-up and world load only, unless it
+  // records gameplay (task 4.18): then each tick starts with a sync of every live instance.
+  if(ScriptTrace::gameplay())
+    ScriptTrace::tick();
+  else if(ScriptTrace::active())
     ScriptTrace::stop("first simulation tick");
   wrld->scaleTime(dt);
   const uint64_t scaled = dt;

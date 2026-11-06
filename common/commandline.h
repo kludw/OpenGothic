@@ -52,6 +52,8 @@ class CommandLine {
     std::string_view    physicsTrace()     const { return physTrace;  }
     // opengothic-rs (task 4.13): `--script-trace <path>`, empty without the flag.
     std::string_view    scriptTrace()      const { return scrTrace;   }
+    // opengothic-rs (task 4.18): `--script-trace-gameplay`: the trace runs until shutdown, with sync events.
+    bool                scriptTraceGameplay() const { return scrTraceGameplay; }
     // opengothic-rs (task 5.12): `--waynet-dump <path>` / `--waynet-queries <path>`.
     std::string_view    waynetDump()       const { return wayDump;    }
     std::string_view    waynetQueries()    const { return wayQueries; }
@@ -67,6 +69,7 @@ class CommandLine {
   private:
     std::string         physTrace;
     std::string         scrTrace;
+    bool                scrTraceGameplay = false;
     std::string         wayDump, wayQueries;
     std::string         scrDump;
     std::string         rtnDump;
