@@ -2,6 +2,14 @@
 
 #include "gothic.h"
 #include "utils/string_frm.h"
+#include "capi/ogsimfight.h"
+
+const std::array<zenkit::IFightAi FightAi::FA::*, 17> FightAi::Lists = {
+  &FA::enemy_prehit, &FA::enemy_stormprehit, &FA::my_w_combo, &FA::my_w_runto, &FA::my_w_strafe,
+  &FA::my_w_focus, &FA::my_w_nofocus, &FA::my_g_combo, &FA::my_g_runto, &FA::my_g_strafe,
+  &FA::my_g_focus, &FA::my_fk_focus, &FA::my_g_fk_nofocus, &FA::my_fk_focus_far,
+  &FA::my_fk_nofocus_far, &FA::my_fk_focus_mag, &FA::my_fk_nofocus_mag,
+  };
 
 FightAi::FightAi() {
   auto vm = Gothic::inst().createPhoenixVm("Fight.dat");
@@ -14,6 +22,7 @@ FightAi::FightAi() {
   fAi.resize(size_t(count));
   for(size_t i=1;i<fAi.size();++i)
     fAi[i] = loadAi(*vm,i);
+  OgSimFight::load(fAi);
   }
 
 const FightAi::FA& FightAi::operator[](size_t i) const {

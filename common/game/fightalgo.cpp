@@ -8,6 +8,7 @@
 #include "gothic.h"
 #include "serialize.h"
 #include "capi/oghooks.h"
+#include "capi/ogsimfight.h"
 
 // According to Gothic1 scripts:
 // W  - Weapon Range (FIGHT_RANGE_FIST * 3)
@@ -31,71 +32,124 @@ void FightAlgo::save(Serialize &fout) {
   fout.write(hitFlg);
   }
 
-void FightAlgo::fillQueue(Npc &npc, Npc &tg, GameScript& owner) {
+og_sim_fight_side FightAlgo::pose(const Npc& npc) {
+  auto c = npc.collosionCenter();
+  og_sim_fight_side s = {};
+  s.center[0] = c.x;
+  s.center[1] = c.y;
+  s.center[2] = c.z;
+  s.rotation  = npc.rotationRad();
+  return s;
+  }
+
+og_sim_fight_side FightAlgo::side(const Npc& npc, const Npc& other, GameScript& owner) {
+  auto&  gv = owner.guildVal();
+  auto   gl = npc.guild();
+  auto   w  = npc.inventory().activeWeapon();
+  og_sim_fight_side s = pose(npc);
+  s.range_base   = gv.fight_range_base[gl];
+  s.range_g      = gv.fight_range_g[gl];
+  s.range_fist   = gv.fight_range_fist[gl];
+  s.range_1ha    = gv.fight_range_1ha[gl];
+  s.range_2ha    = gv.fight_range_2ha[gl];
+  s.weapon_state = uint32_t(npc.weaponState());
+  s.sword_length = w ? w->swordLength() : 0;
+  s.run          = npc.bodyStateMasked()==BS_RUN ? 1 : 0;
+  s.prehit       = npc.isPrehit() ? 1 : 0;
+  s.dist2        = npc.fightDistanceTo(other).quadLength();
+  return s;
+  }
+
+og_sim_fight_in FightAlgo::read(Npc& npc, const Npc& tg, GameScript& owner) {
+  og_sim_fight_in in = {};
+  in.game   = uint32_t(Gothic::inst().version().game);
   // opengothic-rs: the seam's attack lends the hero a tactic (heroes have none) without
   // touching the script instance, which saves would keep.
-  auto tactic = npc.handle().fight_tactic;
-  if(tactic==0 && npc.isPlayer() && OgHooks::hostFightsForPlayer)
-    tactic = OgHooks::playerFightTactic;
-  auto& ai = Gothic::fai()[size_t(tactic)];
-  auto  ws = npc.weaponState();
+  in.tactic = npc.handle().fight_tactic;
+  if(in.tactic==0 && npc.isPlayer() && OgHooks::hostFightsForPlayer)
+    in.tactic = OgHooks::playerFightTactic;
+  in.npc    = side(npc, tg, owner);
+  in.tg     = side(tg, npc, owner);
+  return in;
+  }
 
+og_sim_fight_state FightAlgo::state() const {
+  og_sim_fight_state s = {};
+  s.queue_id = int32_t(queueId);
+  for(int i=0;i<MV_MAX;++i)
+    s.tr[i] = uint8_t(tr[i]);
+  s.hit_flg = hitFlg ? 1 : 0;
+  return s;
+  }
+
+void FightAlgo::setState(const og_sim_fight_state& s) {
+  queueId = zenkit::FightAiMove(s.queue_id);
+  for(int i=0;i<MV_MAX;++i)
+    tr[i] = Action(s.tr[i]);
+  hitFlg = s.hit_flg!=0;
+  }
+
+void FightAlgo::fillQueue(const og_sim_fight_in& in, const FightAi::FA& ai, const Rand& rand) {
+  auto  ws = WeaponState(in.npc.weapon_state);
+  auto& npc = in.npc;
+  auto& tg  = in.tg;
   if(hitFlg) {
     hitFlg = false;
-    if(fillQueue(owner,ai.my_w_strafe))
+    if(fillQueue(ai.my_w_strafe,rand))
       return;
     }
 
-  const bool focus = isInFocusAngle(npc,tg);
+  static const float focusAngle = std::cos(float(30.0*M_PI/180.0));
+  const bool focus = angleTest(npc,tg,focusAngle);
 
-  if(tg.isPrehit() && isInWRange(tg,npc,owner) && isInFocusAngle(tg,npc) && focus){
-    if(tg.bodyStateMasked()==BS_RUN)
-      if(fillQueue(owner,ai.enemy_stormprehit))
+  if(tg.prehit && isInWRange(in.game,tg,npc) && angleTest(tg,npc,focusAngle) && focus){
+    if(tg.run)
+      if(fillQueue(ai.enemy_stormprehit,rand))
         return;
-    if(fillQueue(owner,ai.enemy_prehit))
+    if(fillQueue(ai.enemy_prehit,rand))
       return;
     }
 
   if(ws==WeaponState::Fist || ws==WeaponState::W1H || ws==WeaponState::W2H) {
-    if(isInWRange(npc,tg,owner)) {
-      if(focus && npc.bodyStateMasked()==BS_RUN)
-        if(fillQueue(owner,ai.my_w_runto))
+    if(isInWRange(in.game,npc,tg)) {
+      if(focus && npc.run)
+        if(fillQueue(ai.my_w_runto,rand))
           return;
-      if(focus && npc.bodyStateMasked()!=BS_RUN)
-        if(fillQueue(owner,ai.my_w_focus))
+      if(focus && !npc.run)
+        if(fillQueue(ai.my_w_focus,rand))
           return;
-      if(fillQueue(owner,ai.my_w_nofocus))
+      if(fillQueue(ai.my_w_nofocus,rand))
         return;
       }
 
-    if(isInGRange(npc,tg,owner)) {
-      if(focus && npc.bodyStateMasked()==BS_RUN)
-        if(fillQueue(owner,ai.my_g_runto))
+    if(isInGRange(in.game,npc,tg)) {
+      if(focus && npc.run)
+        if(fillQueue(ai.my_g_runto,rand))
           return;
-      if(focus && npc.bodyStateMasked()!=BS_RUN)
-        if(fillQueue(owner,ai.my_g_focus))
+      if(focus && !npc.run)
+        if(fillQueue(ai.my_g_focus,rand))
           return;
       }
     }
 
   if(ws==WeaponState::Mage) {
-    if(isInWRange(npc,tg,owner))
-      if(fillQueue(owner,ai.my_fk_focus_mag))
+    if(isInWRange(in.game,npc,tg))
+      if(fillQueue(ai.my_fk_focus_mag,rand))
         return;
-    if(fillQueue(owner,ai.my_fk_nofocus_mag))
+    if(fillQueue(ai.my_fk_nofocus_mag,rand))
       return;
     }
 
-  if(isInWRange(npc,tg,owner) && focus)
-    if(fillQueue(owner,ai.my_fk_focus_far))
+  if(isInWRange(in.game,npc,tg) && focus)
+    if(fillQueue(ai.my_fk_focus_far,rand))
       return;
-  if(fillQueue(owner,ai.my_fk_nofocus_far))
+  if(fillQueue(ai.my_fk_nofocus_far,rand))
     return;
 
-  fillQueue(owner,ai.my_w_nofocus);
+  fillQueue(ai.my_w_nofocus,rand);
   }
 
-bool FightAlgo::fillQueue(GameScript& owner, const zenkit::IFightAi& src) {
+bool FightAlgo::fillQueue(const zenkit::IFightAi& src, const Rand& rand) {
   uint32_t sz=0;
   for(size_t i=0; i<zenkit::IFightAi::move_count; ++i){
     if(src.move[i]==zenkit::FightAiMove::NOP)
@@ -104,11 +158,15 @@ bool FightAlgo::fillQueue(GameScript& owner, const zenkit::IFightAi& src) {
     }
   if(sz==0)
     return false;
-  queueId = zenkit::FightAiMove(src.move[owner.rand(sz)]);
+  queueId = zenkit::FightAiMove(src.move[rand(sz)]);
   return queueId!=zenkit::FightAiMove::NOP;
   }
 
-FightAlgo::Action FightAlgo::nextFromQueue(Npc& npc, Npc& tg, GameScript& owner) {
+FightAlgo::Action FightAlgo::nextFromQueue(Npc&, Npc&, GameScript& owner) {
+  return Action(OgSimFight::run(*this, OG_SIM_FIGHT_NEXT, nullptr, &owner));
+  }
+
+FightAlgo::Action FightAlgo::nextOn(const Rand& rand) {
   using zenkit::FightAiMove;
 
   if(tr[0]==MV_NULL) {
@@ -129,7 +187,7 @@ FightAlgo::Action FightAlgo::nextFromQueue(Npc& npc, Npc& tg, GameScript& owner)
         break;
         }
       case FightAiMove::STRAFE:{
-        tr[0] = owner.rand(2) ? MV_STRAFEL : MV_STRAFER;
+        tr[0] = rand(2) ? MV_STRAFEL : MV_STRAFER;
         tr[1] = FightAlgo::MV_STRAFE_E;
         break;
         }
@@ -143,12 +201,12 @@ FightAlgo::Action FightAlgo::nextFromQueue(Npc& npc, Npc& tg, GameScript& owner)
         break;
         }
       case FightAiMove::ATTACK_FRONT:{
-        tr[0] = owner.rand(2) ? MV_ATTACKL : MV_ATTACKR;
+        tr[0] = rand(2) ? MV_ATTACKL : MV_ATTACKR;
         tr[1] = MV_ATTACK;
         break;
         }
       case FightAiMove::ATTACK_TRIPLE:{
-        if(owner.rand(2)){
+        if(rand(2)){
           tr[0] = MV_ATTACK;
           tr[1] = MV_ATTACKR;
           tr[2] = MV_ATTACKL;
@@ -213,25 +271,42 @@ bool FightAlgo::hasInstructions() const {
   }
 
 bool FightAlgo::fetchInstructions(Npc &npc, Npc &tg, GameScript& owner) {
-  fillQueue(npc,tg,owner);
+  auto in = read(npc,tg,owner);
+  return OgSimFight::run(*this, OG_SIM_FIGHT_FETCH, &in, &owner)!=0;
+  }
+
+bool FightAlgo::fetchOn(const og_sim_fight_in& in, const FightAi::FA& ai, const Rand& rand) {
+  fillQueue(in,ai,rand);
   if(queueId==zenkit::FightAiMove::NOP)
     return false;
-  nextFromQueue(npc,tg,owner);
+  nextOn(rand);
   return true;
   }
 
 void FightAlgo::consumeAction() {
+  OgSimFight::run(*this, OG_SIM_FIGHT_CONSUME, nullptr, nullptr);
+  }
+
+void FightAlgo::onClearTarget() {
+  OgSimFight::run(*this, OG_SIM_FIGHT_CLEAR, nullptr, nullptr);
+  }
+
+void FightAlgo::onTakeHit() {
+  OgSimFight::run(*this, OG_SIM_FIGHT_TAKE_HIT, nullptr, nullptr);
+  }
+
+void FightAlgo::consumeOn() {
   for(size_t i=1;i<MV_MAX;++i)
     tr[i-1]=tr[i];
   tr[MV_MAX-1]=MV_NULL;
   }
 
-void FightAlgo::onClearTarget() {
+void FightAlgo::clearTargetOn() {
   queueId = zenkit::FightAiMove::NOP;
   tr[0]   = MV_NULL;
   }
 
-void FightAlgo::onTakeHit() {
+void FightAlgo::takeHitOn() {
   hitFlg = true;
   for(auto& i:tr)
     i = MV_NULL;
@@ -242,26 +317,50 @@ float FightAlgo::qDistTo(const Npc& npc, const Npc& tg) const {
   return npc.fightDistanceTo(tg).quadLength();
   }
 
-float FightAlgo::baseDistance(const Npc& npc, const Npc& tg,  GameScript &owner) const {
-  auto&  gv      = owner.guildVal();
-  float  baseTg  = float(gv.fight_range_base[tg .guild()]);
-  float  baseNpc = float(gv.fight_range_base[npc.guild()]);
+float FightAlgo::baseDistance(const og_sim_fight_side& npc, const og_sim_fight_side& tg) {
+  float  baseTg  = float(tg.range_base);
+  float  baseNpc = float(npc.range_base);
   return baseTg + baseNpc;
   }
 
+float FightAlgo::prefferedAttackDistance(uint32_t game, const og_sim_fight_side& npc, const og_sim_fight_side& tg) {
+  float  baseTg  = float(tg.range_base);
+  float  baseNpc = float(npc.range_base);
+  return baseTg + baseNpc + weaponRange(game,npc);
+  }
+
+float FightAlgo::prefferedGDistance(uint32_t game, const og_sim_fight_side& npc, const og_sim_fight_side& tg) {
+  float  baseTg  = float(tg.range_base);
+  float  baseNpc = float(npc.range_base);
+  return float(baseTg + baseNpc + float(npc.range_g)) + weaponRange(game,npc);
+  }
+
+bool FightAlgo::isInWRange(uint32_t game, const og_sim_fight_side& npc, const og_sim_fight_side& tg) {
+  // tested in vanilla on Bloofly's:
+  //  60 weapon range (Spiked club) is not enough to hit
+  //  70 weapon range (Rusty Sword) is good to hit
+  static float padding = 0; // padding
+  auto dist = npc.dist2;
+  auto pd   = prefferedAttackDistance(game,npc,tg) + padding;
+  return (dist<=pd*pd);
+  }
+
+bool FightAlgo::isInGRange(uint32_t game, const og_sim_fight_side& npc, const og_sim_fight_side& tg) {
+  auto dist = npc.dist2;
+  auto pd   = prefferedGDistance(game,npc,tg);
+  return (dist<=pd*pd);
+  }
+
+float FightAlgo::baseDistance(const Npc& npc, const Npc& tg,  GameScript &owner) const {
+  return baseDistance(side(npc,tg,owner), side(tg,npc,owner));
+  }
+
 float FightAlgo::prefferedAttackDistance(const Npc& npc, const Npc& tg,  GameScript &owner) const {
-  auto&  gv      = owner.guildVal();
-  float  baseTg  = float(gv.fight_range_base[tg.guild()]);
-  float  baseNpc = float(gv.fight_range_base[npc.guild()]);
-  return baseTg + baseNpc + weaponRange(owner,npc);
+  return prefferedAttackDistance(uint32_t(Gothic::inst().version().game), side(npc,tg,owner), side(tg,npc,owner));
   }
 
 float FightAlgo::prefferedGDistance(const Npc& npc, const Npc& tg, GameScript &owner) const {
-  auto   gl      = npc.guild();
-  auto&  gv      = owner.guildVal();
-  float  baseTg  = float(gv.fight_range_base[tg.guild()]);
-  float  baseNpc = float(gv.fight_range_base[npc.guild()]);
-  return float(baseTg + baseNpc + float(gv.fight_range_g[gl])) + weaponRange(owner,npc);
+  return prefferedGDistance(uint32_t(Gothic::inst().version().game), side(npc,tg,owner), side(tg,npc,owner));
   }
 
 float FightAlgo::attackFinishDistance(GameScript &owner) const {
@@ -295,40 +394,33 @@ bool FightAlgo::isInCloseupRange(const Npc& npc, const Npc& tg, GameScript& owne
   }
 
 bool FightAlgo::isInWRange(const Npc& npc, const Npc& tg, GameScript& owner) const {
-  // tested in vanilla on Bloofly's:
-  //  60 weapon range (Spiked club) is not enough to hit
-  //  70 weapon range (Rusty Sword) is good to hit
-  static float padding = 0; // padding
-  auto dist = qDistTo(npc, tg);
-  auto pd   = prefferedAttackDistance(npc,tg,owner) + padding;
-  return (dist<=pd*pd);
+  return isInWRange(uint32_t(Gothic::inst().version().game), side(npc,tg,owner), side(tg,npc,owner));
   }
 
 bool FightAlgo::isInGRange(const Npc &npc, const Npc &tg, GameScript &owner) const {
-  auto dist = qDistTo(npc, tg);
-  auto pd   = prefferedGDistance(npc,tg,owner);
-  return (dist<=pd*pd);
+  return isInGRange(uint32_t(Gothic::inst().version().game), side(npc,tg,owner), side(tg,npc,owner));
   }
 
 bool FightAlgo::isInFocusAngle(const Npc &npc, const Npc &tg) const {
   static const float maxAngle = std::cos(float(30.0*M_PI/180.0));
-  return angleTest(npc, tg, maxAngle);
+  return angleTest(pose(npc), pose(tg), maxAngle);
   }
 
 bool FightAlgo::isInFocusAngle(const Npc& npc, const Npc& tg, float ang) const {
   const float maxAngle = std::cos(float(ang*M_PI/180.0));
-  return angleTest(npc, tg, maxAngle);
+  return angleTest(pose(npc), pose(tg), maxAngle);
   }
 
 bool FightAlgo::isInJumpBackAngle(const Npc& npc, const Npc& tg) const {
   static const float maxAngle = std::cos(float(90.0*M_PI/180.0));
-  return angleTest(npc, tg, maxAngle);
+  return angleTest(pose(npc), pose(tg), maxAngle);
   }
 
-bool FightAlgo::angleTest(const Npc& npc, const Npc& tg, float cosMax) {
+bool FightAlgo::angleTest(const og_sim_fight_side& npc, const og_sim_fight_side& tg, float cosMax) {
   // must be consistent with collisions
-  const auto  dpos = tg.collosionCenter() - npc.collosionCenter();
-  const float plAng = npc.rotationRad();
+  const Tempest::Vec3 dpos = Tempest::Vec3(tg.center[0],tg.center[1],tg.center[2]) -
+                             Tempest::Vec3(npc.center[0],npc.center[1],npc.center[2]);
+  const float plAng = npc.rotation;
 
   const float da = plAng-std::atan2(dpos.z,dpos.x);
   const float c  = std::cos(da);
@@ -338,27 +430,24 @@ bool FightAlgo::angleTest(const Npc& npc, const Npc& tg, float cosMax) {
   return true;
   }
 
-float FightAlgo::weaponRange(GameScript &owner, const Npc &npc) {
+float FightAlgo::weaponRange(uint32_t game, const og_sim_fight_side& npc) {
   /*
   NOTE: comments from G2 scripts:
     Bip01 bis BBox
     FAI_W = BASE + ItemRange (or Fist)
     FAI_G = BASE + ItemRange (or Fist) + G
   */
-  auto  gl  = npc.guild();
-  auto& gv  = owner.guildVal();
-  auto  w   = npc.inventory().activeWeapon();
-  int   add = w ? w->swordLength() : 0;
-  auto  bR  = Gothic::inst().version().game==2 ? ReferenceBowRangeG2 : ReferenceBowRangeG1;
+  int   add = npc.sword_length;
+  auto  bR  = game==2 ? ReferenceBowRangeG2 : ReferenceBowRangeG1;
 
-  switch(npc.weaponState()) {
+  switch(WeaponState(npc.weapon_state)) {
     case WeaponState::W1H:
-      return float(gv.fight_range_1ha[gl] + add);
+      return float(npc.range_1ha + add);
     case WeaponState::W2H:
-      return float(gv.fight_range_2ha[gl] + add);
+      return float(npc.range_2ha + add);
     case WeaponState::NoWeapon:
     case WeaponState::Fist:
-      return float(gv.fight_range_fist[gl]);
+      return float(npc.range_fist);
     case WeaponState::Bow:
     case WeaponState::CBow:
       return float(bR);
@@ -367,4 +456,3 @@ float FightAlgo::weaponRange(GameScript &owner, const Npc &npc) {
     }
   return 0;
   }
-

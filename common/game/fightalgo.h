@@ -1,8 +1,12 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <zenkit/addon/daedalus.hh>
 #include <Tempest/Vec>
+
+#include "../../game/capi/og_sim.h"
+#include "game/definitions/fightaidefinitions.h"
 
 class Npc;
 class GameScript;
@@ -59,12 +63,32 @@ class FightAlgo final {
     bool   isInFocusAngle         (const Npc &npc, const Npc &tg, float ang) const;
     bool   isInJumpBackAngle      (const Npc &npc, const Npc &tg) const;
 
-  private:
-    void   fillQueue(Npc &npc, Npc &tg, GameScript& owner);
-    bool   fillQueue(GameScript& owner, const zenkit::IFightAi& src);
+    // opengothic-rs (task 5.16): what fillQueue reads, as og_sim.h holds it, and the
+    // stock logic on it, so og-sim can be compared with it (og_sim_test_fightai,
+    // OgSimFight). Rand answers GameScript::rand(max).
+    using Rand = std::function<uint32_t(uint32_t)>;
+    static og_sim_fight_side pose(const Npc& npc);  // center and rotation only
+    static og_sim_fight_side side(const Npc& npc, const Npc& other, GameScript& owner);
+    static og_sim_fight_in   read(Npc& npc, const Npc& tg, GameScript& owner);
+    og_sim_fight_state state() const;
+    void               setState(const og_sim_fight_state& s);
+    bool   fetchOn(const og_sim_fight_in& in, const FightAi::FA& ai, const Rand& rand);
+    Action nextOn(const Rand& rand);
+    void   consumeOn();
+    void   clearTargetOn();
+    void   takeHitOn();
 
-    static bool   angleTest(const Npc& npc, const Npc& tg, float cosMax);
-    static float  weaponRange(GameScript &owner,const Npc &npc);
+    static float  weaponRange(uint32_t game, const og_sim_fight_side& npc);
+    static float  baseDistance(const og_sim_fight_side& npc, const og_sim_fight_side& tg);
+    static float  prefferedAttackDistance(uint32_t game, const og_sim_fight_side& npc, const og_sim_fight_side& tg);
+    static float  prefferedGDistance(uint32_t game, const og_sim_fight_side& npc, const og_sim_fight_side& tg);
+    static bool   isInWRange(uint32_t game, const og_sim_fight_side& npc, const og_sim_fight_side& tg);
+    static bool   isInGRange(uint32_t game, const og_sim_fight_side& npc, const og_sim_fight_side& tg);
+    static bool   angleTest(const og_sim_fight_side& npc, const og_sim_fight_side& tg, float cosMax);
+
+  private:
+    void   fillQueue(const og_sim_fight_in& in, const FightAi::FA& ai, const Rand& rand);
+    bool   fillQueue(const zenkit::IFightAi& src, const Rand& rand);
 
     zenkit::FightAiMove queueId = zenkit::FightAiMove::NOP;
     Action              tr   [MV_MAX]={};

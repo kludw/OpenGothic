@@ -17,7 +17,8 @@
  * reach the table in the order C++ made them; callbacks must not call OgRng. waynet: the
  * loading thread (waynet_load) and the main thread; never two at once. routine: the
  * loading thread (startup scripts' TA_ and Wld_SetMobRoutine calls, save loading) and the main
- * thread; never two at once. damage: the main thread. Pointer arguments are non-null (unless documented otherwise)
+ * thread; never two at once. damage, fight: the main thread; fight_load: the thread that
+ * runs Gothic::setupGlobalScripts. Pointer arguments are non-null (unless documented otherwise)
  * and valid for the call only. */
 
 #pragma once
@@ -37,7 +38,8 @@ extern "C" {
 #define OG_SIM_MOD_WAYNET 2 /* WayMatrix::wayTo, WayMatrix::findFreePoint, FpLock (5.13) */
 #define OG_SIM_MOD_ROUTINE 3 /* Npc routine tables, WorldObjects mob routines (5.14) */
 #define OG_SIM_MOD_DAMAGE 4 /* DamageCalculator::damageValue, damageFall (5.15) */
-#define OG_SIM_MODS     5
+#define OG_SIM_MOD_FIGHTAI 5 /* FightAlgo's move selection, the FAI table (5.16) */
+#define OG_SIM_MODS     6
 
 /* GameSession's clock fields. */
 typedef struct og_sim_clock {
@@ -187,6 +189,60 @@ typedef struct og_sim_damage_draw {
   uint32_t value;
   } og_sim_damage_draw;
 
+/* zenkit::IFightAi::move_count, FightAi::FA's situation lists (declaration order:
+ * enemy_prehit, enemy_stormprehit, my_w_combo, my_w_runto, my_w_strafe, my_w_focus,
+ * my_w_nofocus, my_g_combo, my_g_runto, my_g_strafe, my_g_focus, my_fk_focus,
+ * my_g_fk_nofocus, my_fk_focus_far, my_fk_nofocus_far, my_fk_focus_mag,
+ * my_fk_nofocus_mag) and FightAlgo::MV_MAX. */
+#define OG_SIM_FAI_MOVES      6
+#define OG_SIM_FAI_SITUATIONS 17
+#define OG_SIM_FIGHT_QUEUE    6
+
+/* What FightAlgo reads from one NPC. */
+typedef struct og_sim_fight_side {
+  int32_t  range_base;    /* guildVal().fight_range_base[guild] */
+  int32_t  range_g;       /* fight_range_g */
+  int32_t  range_fist;    /* fight_range_fist */
+  int32_t  range_1ha;     /* fight_range_1ha */
+  int32_t  range_2ha;     /* fight_range_2ha */
+  uint32_t weapon_state;  /* WeaponState: 0 none, 1 fist, 2 1H, 3 2H, 4 bow, 5 crossbow, 6 mage */
+  int32_t  sword_length;  /* inventory().activeWeapon()->swordLength(), 0 without one */
+  int32_t  run;           /* bodyStateMasked()==BS_RUN */
+  int32_t  prehit;        /* isPrehit() */
+  float    center[3];     /* collosionCenter() */
+  float    rotation;      /* rotationRad() */
+  float    dist2;         /* fightDistanceTo(the other).quadLength() */
+  } og_sim_fight_side;
+
+/* What FightAlgo::fillQueue reads: the NPC, its target, Gothic::version().game and the
+ * tactic (handle().fight_tactic, or the seam's hero tactic). */
+typedef struct og_sim_fight_in {
+  uint32_t          game;
+  int32_t           tactic;
+  og_sim_fight_side npc;
+  og_sim_fight_side tg;
+  } og_sim_fight_in;
+
+/* FightAlgo's state (what FightAlgo::save writes). */
+typedef struct og_sim_fight_state {
+  int32_t queue_id;                  /* zenkit::FightAiMove */
+  uint8_t tr[OG_SIM_FIGHT_QUEUE];    /* FightAlgo::Action, the head first */
+  uint8_t hit_flg;
+  uint8_t pad;                       /* 0 */
+  } og_sim_fight_state;
+
+/* og_sim_vtable.fight's op. */
+#define OG_SIM_FIGHT_FETCH    0  /* fetchInstructions: result = its bool; `in` set */
+#define OG_SIM_FIGHT_NEXT     1  /* nextFromQueue: result = the Action */
+#define OG_SIM_FIGHT_CONSUME  2  /* consumeAction: result 0 */
+#define OG_SIM_FIGHT_CLEAR    3  /* onClearTarget: result 0 */
+#define OG_SIM_FIGHT_TAKE_HIT 4  /* onTakeHit: result 0 */
+
+typedef struct og_sim_fight_out {
+  og_sim_fight_state state;  /* after the operation */
+  int32_t            result;
+  } og_sim_fight_out;
+
 /* waynet_way_to's return value: keep the C++ path. */
 #define OG_SIM_KEEP_PATH 0xFFFFFFFFu
 
@@ -298,6 +354,24 @@ typedef struct og_sim_vtable {
    * entry; in USE mode Rust overwrites it with its result. */
   void (*damage)(void* user, const og_sim_damage_in* in, const og_sim_damage_draw* draws,
                  uint32_t draw_count, const og_sim_damage_out* cpp, og_sim_damage_out* out);
+  /* FightAi's constructor built C++'s table from FIGHT.DAT: `dat` is that file's bytes,
+   * `table` C++'s lists, `tactics` x OG_SIM_FAI_SITUATIONS x OG_SIM_FAI_MOVES
+   * zenkit::FightAiMove values (tactic 0 included, empty). Rust builds its own table
+   * from `dat`; differences count as mismatches. Returns 0, or -1 (logged) when Rust
+   * couldn't build one: its fight calls then answer with C++'s results and count as
+   * mismatches. */
+  int32_t (*fight_load)(void* user, const uint8_t* dat, uint64_t dat_len, const int32_t* table,
+                        uint32_t tactics);
+  /* A FightAlgo operation on `npc` (the NPC's FightAlgo address, a key for the log): `before` is
+   * the state before it, `in` what fillQueue read (FETCH only, else NULL), `draws` the
+   * GameScript::rand calls C++ made, in order (`draw_count`, may be 0 and `draws` NULL),
+   * `cpp` C++'s state and result after it. Rust runs the operation on `before`, its rand
+   * calls answered with those values in order, and compares. `out` holds `cpp` on entry;
+   * in USE mode Rust overwrites it (C++ adopts the state and returns the result). */
+  void (*fight)(void* user, uint64_t npc, uint32_t op, const og_sim_fight_in* in,
+                const og_sim_damage_draw* draws, uint32_t draw_count,
+                const og_sim_fight_state* before, const og_sim_fight_out* cpp,
+                og_sim_fight_out* out);
   } og_sim_vtable;
 
 /* Registers the table (copied) and the modes before og_init/og_run and before
@@ -327,6 +401,18 @@ void og_sim_test_sort(const float* keys, uint32_t n, uint32_t* order);
  * UINT32_MAX when it made more than `raw_count` (`out` is then unspecified). */
 uint32_t og_sim_test_damage(const og_sim_damage_in* in, const uint32_t* raw, uint32_t raw_count,
                             og_sim_damage_out* out, og_sim_damage_draw* draws, uint32_t cap);
+
+/* Test seam for og_sim::fightai (5.16): FightAlgo operation `op` (OG_SIM_FIGHT_*) on
+ * state `state` (updated in place), with `tactic` (OG_SIM_FAI_SITUATIONS x
+ * OG_SIM_FAI_MOVES values) as the NPC's FAI lists and `in` what fillQueue reads (FETCH
+ * only; may be NULL otherwise). The k-th GameScript::rand(max) is answered with raw[k] %
+ * max. Writes the result to `result` and the first `cap` draws to `draws`; returns the
+ * number of rand calls, UINT32_MAX when it made more than `raw_count` (`state` and
+ * `result` are then unspecified), or UINT32_MAX - 1 for an unknown op or a FETCH
+ * without `in`. */
+uint32_t og_sim_test_fightai(uint32_t op, const og_sim_fight_in* in, const int32_t* tactic,
+                             og_sim_fight_state* state, int32_t* result, const uint32_t* raw,
+                             uint32_t raw_count, og_sim_damage_draw* draws, uint32_t cap);
 
 #ifdef __cplusplus
 }

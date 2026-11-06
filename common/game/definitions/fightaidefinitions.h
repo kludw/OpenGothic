@@ -3,6 +3,8 @@
 #include "script/ogvm.h"
 #include <zenkit/addon/daedalus.hh>
 
+#include <array>
+
 class FightAi final {
   public:
     struct FA final {
@@ -32,6 +34,10 @@ class FightAi final {
       zenkit::IFightAi my_fk_focus_mag;   // Opponents in focus
       zenkit::IFightAi my_fk_nofocus_mag; // Opponents NOT in focus
       };
+
+    // opengothic-rs (task 5.16): FA's lists in declaration order (og_sim.h
+    // OG_SIM_FAI_SITUATIONS).
+    static const std::array<zenkit::IFightAi FA::*, 17> Lists;
 
     FightAi();
 
