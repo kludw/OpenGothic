@@ -32,7 +32,7 @@ extern "C" int32_t og_sim_set(const og_sim_vtable* vt, const uint8_t* m) {
      !vt->waynet_mismatch || !vt->routine_npc || !vt->routine_current ||
      !vt->routine_end_time || !vt->routine_mob_set || !vt->routine_mob_load ||
      !vt->routine_mob_drop || !vt->routine_mob_tick || !vt->routine_mob_reset ||
-     !vt->routine_mob_scheme_state || !vt->routine_mismatch) {
+     !vt->routine_mob_scheme_state || !vt->routine_mismatch || !vt->damage) {
     Log::e("og_sim_set: table with a missing callback");
     return -1;
     }
@@ -40,7 +40,8 @@ extern "C" int32_t og_sim_set(const og_sim_vtable* vt, const uint8_t* m) {
   for(uint32_t i=0; i<OG_SIM_MODS; ++i)
     modes[i] = m[i];
   Log::i("og_sim: time mode ",int(modes[OG_SIM_MOD_TIME]),", rng mode ",int(modes[OG_SIM_MOD_RNG]),
-         ", waynet mode ",int(modes[OG_SIM_MOD_WAYNET]),", routine mode ",int(modes[OG_SIM_MOD_ROUTINE]));
+         ", waynet mode ",int(modes[OG_SIM_MOD_WAYNET]),", routine mode ",int(modes[OG_SIM_MOD_ROUTINE]),
+         ", damage mode ",int(modes[OG_SIM_MOD_DAMAGE]));
   return 0;
   }
 

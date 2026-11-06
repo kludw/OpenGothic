@@ -17,7 +17,7 @@
  * reach the table in the order C++ made them; callbacks must not call OgRng. waynet: the
  * loading thread (waynet_load) and the main thread; never two at once. routine: the
  * loading thread (startup scripts' TA_ and Wld_SetMobRoutine calls, save loading) and the main
- * thread; never two at once. Pointer arguments are non-null (unless documented otherwise)
+ * thread; never two at once. damage: the main thread. Pointer arguments are non-null (unless documented otherwise)
  * and valid for the call only. */
 
 #pragma once
@@ -36,7 +36,8 @@ extern "C" {
 #define OG_SIM_MOD_RNG  1  /* OgRng: the four named streams (OG_RNG_* in og_capi.h) */
 #define OG_SIM_MOD_WAYNET 2 /* WayMatrix::wayTo, WayMatrix::findFreePoint, FpLock (5.13) */
 #define OG_SIM_MOD_ROUTINE 3 /* Npc routine tables, WorldObjects mob routines (5.14) */
-#define OG_SIM_MODS     4
+#define OG_SIM_MOD_DAMAGE 4 /* DamageCalculator::damageValue, damageFall (5.15) */
+#define OG_SIM_MODS     5
 
 /* GameSession's clock fields. */
 typedef struct og_sim_clock {
@@ -134,6 +135,57 @@ typedef struct og_sim_mob_change {
   uint32_t scheme;
   int32_t  state;
   } og_sim_mob_change;
+
+/* What a DamageCalculator call computes (og_sim_damage_in.kind). */
+#define OG_SIM_DAMAGE_MELEE  0  /* damageValue without bullet or spell: swordDamage */
+#define OG_SIM_DAMAGE_BULLET 1  /* damageValue with a Bullet: rangeDamage(bullet) */
+#define OG_SIM_DAMAGE_SPELL  2  /* damageValue(isSpell) without a bullet: rangeDamage(splDmg) */
+#define OG_SIM_DAMAGE_FALL   3  /* damageFall */
+
+#define OG_SIM_DAMAGE_TYPES 8   /* zenkit::DamageType::NUM */
+
+/* Everything a DamageCalculator call reads from the NPCs, the bullet, the script and the
+ * game version; fields a kind doesn't read are 0. */
+typedef struct og_sim_damage_in {
+  uint32_t kind;                              /* OG_SIM_DAMAGE_* */
+  uint32_t game;                              /* Gothic::version().game: 1 or 2 */
+  /* attacker (src) */
+  int32_t  strength;                          /* attribute(ATR_STRENGTH) */
+  int32_t  src_damage[OG_SIM_DAMAGE_TYPES];   /* handle().damage */
+  int32_t  hitchance[3];                      /* handle().hitchance[TALENT_UNKNOWN, 1H, 2H] */
+  int32_t  talent[3];                         /* talentValue(TALENT_UNKNOWN, 1H, 2H) */
+  int32_t  is_monster;                        /* isMonster() */
+  uint32_t weapon;                            /* active weapon: 0 none, 1 one-, 2 two-handed */
+  int32_t  damage_type;                       /* damageTypeMask(src) */
+  int32_t  crit_mul;                          /* GameScript::criticalDamageMultiplyer */
+  /* victim (other) */
+  int32_t  protection[OG_SIM_DAMAGE_TYPES];   /* handle().protection */
+  /* BULLET: Bullet::damage(); SPELL: splDmg */
+  int32_t  damage[OG_SIM_DAMAGE_TYPES];
+  float    path_length;                       /* Bullet::pathLength */
+  int32_t  bullet_is_spell;                   /* Bullet::isSpell */
+  float    hit_chance;                        /* Bullet::hitChance */
+  float    crit_chance;                       /* Bullet::critChance */
+  uint32_t coll_mask;                         /* CollideMask */
+  /* FALL: the falling NPC */
+  float    speed;                             /* fallSpeed.length() */
+  int32_t  falldown_height;                   /* guildVal().falldown_height[guild] */
+  int32_t  falldown_damage;                   /* guildVal().falldown_damage[guild] */
+  int32_t  prot_fall;                         /* protection(PROT_FALL) */
+  } og_sim_damage_in;
+
+/* DamageCalculator::Val. */
+typedef struct og_sim_damage_out {
+  int32_t value;
+  int32_t has_hit;
+  int32_t invincible;
+  } og_sim_damage_out;
+
+/* One GameScript::rand(max) call and its answer (OgRng gameplay draw % max). */
+typedef struct og_sim_damage_draw {
+  uint32_t max;
+  uint32_t value;
+  } og_sim_damage_draw;
 
 /* waynet_way_to's return value: keep the C++ path. */
 #define OG_SIM_KEEP_PATH 0xFFFFFFFFu
@@ -239,6 +291,13 @@ typedef struct og_sim_vtable {
    * table doesn't have) and logged; `what` names the call. Rust counts it. Never called
    * during another routine callback. */
   void (*routine_mismatch)(void* user, const char* what);
+  /* A DamageCalculator call: `in` what it read, `cpp` C++'s result, `draws` the
+   * GameScript::rand calls C++'s computation made, in order (`draw_count` of them, may be
+   * 0 and then `draws` may be NULL). Rust computes the same, answering its own rand calls
+   * with those values in order, and compares result and draws. `out` holds `cpp` on
+   * entry; in USE mode Rust overwrites it with its result. */
+  void (*damage)(void* user, const og_sim_damage_in* in, const og_sim_damage_draw* draws,
+                 uint32_t draw_count, const og_sim_damage_out* cpp, og_sim_damage_out* out);
   } og_sim_vtable;
 
 /* Registers the table (copied) and the modes before og_init/og_run and before
@@ -260,6 +319,14 @@ int64_t og_sim_test_gtime(uint32_t op, int64_t a, int64_t b, int64_t c);
  * `keys` with `*a < *b`, the instantiation WayMatrix's sorts use (pointer elements, a
  * lambda comparator). Writes the sorted order as indices into `keys` to `order`. */
 void og_sim_test_sort(const float* keys, uint32_t n, uint32_t* order);
+
+/* Test seam for og_sim::damage (5.15): DamageCalculator's computation of `in` (the code
+ * damageValue/damageFall run on what they read), its k-th GameScript::rand(max) call
+ * answered with raw[k] % max as GameScript::rand reduces an OgRng draw. Writes the result
+ * to `out` and the first `cap` draws to `draws`; returns the number of rand calls, or
+ * UINT32_MAX when it made more than `raw_count` (`out` is then unspecified). */
+uint32_t og_sim_test_damage(const og_sim_damage_in* in, const uint32_t* raw, uint32_t raw_count,
+                            og_sim_damage_out* out, og_sim_damage_draw* draws, uint32_t cap);
 
 #ifdef __cplusplus
 }
