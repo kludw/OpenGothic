@@ -16,8 +16,31 @@ class ScriptStats final {
   public:
     static bool on() { return enabled.load(std::memory_order_relaxed); }
     static void enable(bool v);
-    // og_script_call_external.
-    static void bridge()   { if(on()) bridges.fetch_add(1, std::memory_order_relaxed); }
+    // One og_script_call_external: counted; the outermost per thread is timed (an external
+    // may run a script that bridges again).
+    class Bridge final {
+      public:
+        Bridge() {
+          if(!on())
+            return;
+          counted = true;
+          bridges.fetch_add(1, std::memory_order_relaxed);
+          if(bridgeDepth++==0)
+            start = std::chrono::steady_clock::now();
+          }
+        ~Bridge() {
+          if(!counted || --bridgeDepth!=0)
+            return;
+          const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-start).count();
+          bridgeNanos.fetch_add(uint64_t(ns), std::memory_order_relaxed);
+          }
+        Bridge(const Bridge&) = delete;
+        Bridge& operator=(const Bridge&) = delete;
+
+      private:
+        bool                                  counted = false;
+        std::chrono::steady_clock::time_point start;
+      };
     // og_script_member_get/set, og_script_global_get/set.
     static void accessor() { if(on()) accessors.fetch_add(1, std::memory_order_relaxed); }
     // The totals since the last take (or enable), then zero.
@@ -54,5 +77,7 @@ class ScriptStats final {
     static inline std::atomic<uint64_t> nanos     {0};
     static inline std::atomic<uint64_t> bridges   {0};
     static inline std::atomic<uint64_t> accessors {0};
+    static inline std::atomic<uint64_t> bridgeNanos {0};
     static inline thread_local uint32_t depth     = 0;
+    static inline thread_local uint32_t bridgeDepth = 0;
   };
