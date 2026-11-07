@@ -6,6 +6,7 @@
 #include "scripttrace.h"
 #include "../../game/capi/og_script.h"
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -219,7 +220,9 @@ class OgVm final {
       const std::function<R(P...)> cb = ScriptTrace::active() ? tracedExternal(name, callback) : callback;
       zk->register_external(name, cb);
       if(auto* sym = zk->find_symbol_by_name(name)) {
-        externals[sym->name()] = Zk::template stackCall<R, P...>(cb);
+        auto& ext = externals[sym->name()];
+        ext = Zk::template stackCall<R, P...>(cb);
+        bindIndex(sym->index(), &ext);
         if(rust!=nullptr)
           backendBindExternal(sym);
         }
@@ -229,8 +232,8 @@ class OgVm final {
       register_external(name, std::function {callback});
       }
 
-    // The callback registered for an external, or nullptr. Names match like ZenKit's symbol lookup.
-    const External* external(std::string_view name) const;
+    // The callback registered for the external with symbol index `symbol`, or nullptr.
+    const External* external(uint32_t symbol) const;
 
   private:
 
@@ -243,10 +246,10 @@ class OgVm final {
         return zk->template call_function<R, P...>(s, args...);
       if(s==nullptr)
         throw zenkit::DaedalusVmException {"Cannot call function: not found"};
-      std::vector<og_script_value> values;
-      (values.push_back(toValue(args)), ...);
+      // No heap per entry (task 4.19): entries run every frame.
+      std::array<og_script_value, sizeof...(P)> values = {toValue(args)...};
       og_script_value ret = {};
-      backendCall(s, values, retKind<R>(), ret);
+      backendCall(s, values.data(), values.size(), retKind<R>(), ret);
       if constexpr (std::same_as<R, zenkit::IgnoreReturnValue>) {
         return R {};
         }
@@ -315,10 +318,11 @@ class OgVm final {
       }
 
     og_script_inst backendPin(std::shared_ptr<zenkit::DaedalusInstance> const& inst);
-    void backendCall(const zenkit::DaedalusSymbol* s, std::vector<og_script_value>& args, uint32_t retKind, og_script_value& ret);
+    void backendCall(const zenkit::DaedalusSymbol* s, const og_script_value* args, size_t count, uint32_t retKind, og_script_value& ret);
     void backendInit(std::shared_ptr<zenkit::DaedalusInstance> const& inst, const zenkit::DaedalusSymbol* s);
     void backendBind(std::shared_ptr<zenkit::DaedalusInstance> const& inst, const zenkit::DaedalusSymbol* s);
     void backendBindExternal(const zenkit::DaedalusSymbol* sym);
+    void bindIndex(uint32_t symbol, const External* ext);
     void backendBindDefault();
     void backendLenient();
 
@@ -409,6 +413,8 @@ class OgVm final {
     std::unique_ptr<Zk>                     zk;
     std::string                             vmName;
     std::unordered_map<std::string, External> externals;
+    // Symbol index -> entry of `externals` (the map's nodes don't move, also not when it moves).
+    std::vector<const External*>            externalsByIndex;
     std::function<void(std::string_view)>   defaultExternal;
     // The og_script bridge (heap: its address is the backend's og_script_host); null on ZenKit.
     std::unique_ptr<Rust>                   rust;
