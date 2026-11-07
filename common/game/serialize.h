@@ -45,6 +45,9 @@ class Serialize {
       };
     Serialize(Tempest::ODevice& fout);
     Serialize(Tempest::IDevice&  fin);
+    // opengothic-rs (task 5.18): dump mode. Every value a save writes is appended to
+    // json as canonical JSON instead (og_dump_world); entries become ["name",[values]].
+    explicit Serialize(std::string& json);
     Serialize(Serialize&&)=delete;
     ~Serialize() noexcept(false);
 
@@ -84,32 +87,36 @@ class Serialize {
 
     void readNpc(OgVm& vm, std::shared_ptr<zenkit::INpc>& npc);
 
+    // opengothic-rs (task 5.18): the JSON spellings the dump uses, also for og_dump_world.
+    static void jsonString(std::string& out, std::string_view s);
+    static void jsonFloat (std::string& out, float f);
+
   private:
     Serialize();
 
     // trivial types
-    void implWrite(bool      i) { implWrite(uint8_t(i ? 1 : 0)); }
+    void implWrite(bool      i) { if(dump!=nullptr) dumpRaw(i ? "true" : "false"); else implWrite(uint8_t(i ? 1 : 0)); }
     void implRead (bool&     i) { uint8_t x=0; read(x); i=(x!=0); }
 
-    void implWrite(char      i) { writeBytes(&i,sizeof(i)); }
+    void implWrite(char      i) { if(dump!=nullptr) dumpNum(int64_t(i)); else writeBytes(&i,sizeof(i)); }
     void implRead (char&     i) { readBytes (&i,sizeof(i)); }
 
-    void implWrite(uint8_t   i) { writeBytes(&i,sizeof(i)); }
+    void implWrite(uint8_t   i) { if(dump!=nullptr) dumpNum(uint64_t(i)); else writeBytes(&i,sizeof(i)); }
     void implRead (uint8_t&  i) { readBytes (&i,sizeof(i)); }
 
-    void implWrite(uint16_t  i) { writeBytes(&i,sizeof(i)); }
+    void implWrite(uint16_t  i) { if(dump!=nullptr) dumpNum(uint64_t(i)); else writeBytes(&i,sizeof(i)); }
     void implRead (uint16_t& i) { readBytes (&i,sizeof(i)); }
 
-    void implWrite(int32_t   i) { writeBytes(&i,sizeof(i)); }
+    void implWrite(int32_t   i) { if(dump!=nullptr) dumpNum(int64_t(i)); else writeBytes(&i,sizeof(i)); }
     void implRead (int32_t&  i) { readBytes (&i,sizeof(i)); }
 
-    void implWrite(uint32_t  i) { writeBytes(&i,sizeof(i)); }
+    void implWrite(uint32_t  i) { if(dump!=nullptr) dumpNum(uint64_t(i)); else writeBytes(&i,sizeof(i)); }
     void implRead (uint32_t& i) { readBytes (&i,sizeof(i)); }
 
-    void implWrite(uint64_t  i) { writeBytes(&i,sizeof(i)); }
+    void implWrite(uint64_t  i) { if(dump!=nullptr) dumpNum(uint64_t(i)); else writeBytes(&i,sizeof(i)); }
     void implRead (uint64_t& i) { readBytes (&i,sizeof(i)); }
 
-    void implWrite(float  i)    { writeBytes(&i,sizeof(i)); }
+    void implWrite(float  i)    { if(dump!=nullptr) dumpFloat(i); else writeBytes(&i,sizeof(i)); }
     void implRead (float& i)    { readBytes (&i,sizeof(i)); }
 
     void implWrite(zenkit::DaedalusDataType  i)    { write((uint32_t) i); }
@@ -121,26 +128,26 @@ class Serialize {
     void implRead(T&) = delete;
 
     // typedef
-    void implWrite(gtime  i)    { writeBytes(&i,sizeof(i)); }
+    void implWrite(gtime  i)    { if(dump!=nullptr) dumpNum(i.toInt()); else writeBytes(&i,sizeof(i)); }
     void implRead (gtime& i)    { readBytes (&i,sizeof(i)); }
 
-    void implWrite(WalkBit   i) { writeBytes(&i,sizeof(i)); }
+    void implWrite(WalkBit   i) { if(dump!=nullptr) dumpNum(uint64_t(i)); else writeBytes(&i,sizeof(i)); }
     void implRead (WalkBit&  i) { readBytes (&i,sizeof(i)); }
 
-    void implWrite(BodyState i) { writeBytes(&i,sizeof(i)); }
+    void implWrite(BodyState i) { if(dump!=nullptr) dumpNum(uint64_t(i)); else writeBytes(&i,sizeof(i)); }
     void implRead (BodyState&i) { readBytes (&i,sizeof(i)); }
 
-    void implWrite(Attitude  i) { writeBytes(&i,sizeof(i));}
+    void implWrite(Attitude  i) { if(dump!=nullptr) dumpNum(int64_t(i)); else writeBytes(&i,sizeof(i));}
     void implRead (Attitude& i) { readBytes (&i,sizeof(i)); }
 
     void implWrite(WeaponState  w);
     void implRead (WeaponState &w);
 
     // composite types
-    void implWrite(const Tempest::Vec3& s) { writeBytes(&s,sizeof(s)); }
+    void implWrite(const Tempest::Vec3& s) { if(dump!=nullptr) dumpFloats(&s,sizeof(s)); else writeBytes(&s,sizeof(s)); }
     void implRead (Tempest::Vec3& s)       { readBytes (&s,sizeof(s)); }
 
-    void implWrite(const Tempest::Matrix4x4& i) { writeBytes(&i,sizeof(i)); }
+    void implWrite(const Tempest::Matrix4x4& i) { if(dump!=nullptr) dumpFloats(&i,sizeof(i)); else writeBytes(&i,sizeof(i)); }
     void implRead (Tempest::Matrix4x4& i)       { readBytes (&i,sizeof(i)); }
 
     void implWrite(const zenkit::AnimationSample& i);
@@ -193,7 +200,10 @@ class Serialize {
     void implWriteVec(const std::vector<T>& s,std::true_type) {
       uint32_t sz=uint32_t(s.size());
       write(sz);
-      writeBytes(s.data(),sz*sizeof(T));
+      if(dump!=nullptr)
+        dumpTrivial(s.data(),sz);
+      else
+        writeBytes(s.data(),sz*sizeof(T));
       }
 
     template<class T>
@@ -227,8 +237,39 @@ class Serialize {
 
     template<class T, size_t sz>
     void implWriteArr(const T (&s)[sz],std::true_type) {
-      writeBytes(s,sz*sizeof(T));
+      if(dump!=nullptr)
+        dumpTrivial(s,sz);
+      else
+        writeBytes(s,sz*sizeof(T));
       }
+
+    // Arithmetic and enum elements one by one, anything else as its bytes.
+    template<class T>
+    void dumpTrivial(const T* s, size_t n) {
+      for(size_t i=0; i<n; ++i) {
+        if constexpr(std::is_same_v<T,bool>)
+          dumpRaw(s[i] ? "true" : "false");
+        else if constexpr(std::is_same_v<T,float>)
+          dumpFloat(s[i]);
+        else if constexpr(std::is_enum_v<T>)
+          dumpTrivial(reinterpret_cast<const std::underlying_type_t<T>*>(s+i),1);
+        else if constexpr(std::is_integral_v<T> && std::is_signed_v<T>)
+          dumpNum(int64_t(s[i]));
+        else if constexpr(std::is_integral_v<T>)
+          dumpNum(uint64_t(s[i]));
+        else {
+          dumpHex(s,n*sizeof(T));
+          return;
+          }
+        }
+      }
+
+    void dumpRaw   (std::string_view token);
+    void dumpNum   (int64_t  v);
+    void dumpNum   (uint64_t v);
+    void dumpFloat (float f);
+    void dumpFloats(const void* v, size_t sz);
+    void dumpHex   (const void* v, size_t sz);
 
     template<class T, size_t sz>
     void implRead(T (&s)[sz]) {
@@ -297,5 +338,8 @@ class Serialize {
     uint64_t                 readOffset = 0;
     Tempest::ODevice*        fout      = nullptr;
     Tempest::IDevice*        fin       = nullptr;
+    std::string*             dump      = nullptr;
+    bool                     dumpEntry = false;  // an entry's value list is open
+    bool                     dumpFirst = true;   // no value yet in the open list (or no entry yet)
   };
 

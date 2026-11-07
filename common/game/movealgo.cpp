@@ -42,6 +42,31 @@ void MoveAlgo::save(Serialize &fout) const {
   fout.write(diveStart);
   }
 
+// The hit's vob and user pointer are left out: nothing reads them from the cache.
+void MoveAlgo::saveOgState(Serialize& fout) const {
+  fout.write(lastBounce);
+  fout.write(cache.x,cache.y,cache.z,cache.v,cache.n,uint8_t(cache.mat),cache.hasCol,cache.hitFraction);
+  fout.write(std::string_view(cache.sector!=nullptr ? cache.sector : ""));
+  fout.write(cacheW.x,cacheW.y,cacheW.z,cacheW.wdepth,cacheW.hasCol);
+  }
+
+void MoveAlgo::loadOgState(Serialize& fin) {
+  fin.read(lastBounce);
+  uint8_t mat = 0;
+  fin.read(cache.x,cache.y,cache.z,cache.v,cache.n,mat,cache.hasCol,cache.hitFraction);
+  cache.mat = zenkit::MaterialGroup(mat);
+  std::string sector;
+  fin.read(sector);
+  cache.sector = nullptr;
+  if(!sector.empty()) {
+    const auto name = npc.world().physic()->validateSectorName(sector);
+    cache.sector = name.empty() ? nullptr : name.data();
+    }
+  cache.vob  = nullptr;
+  cache.uptr = nullptr;
+  fin.read(cacheW.x,cacheW.y,cacheW.z,cacheW.wdepth,cacheW.hasCol);
+  }
+
 void MoveAlgo::tickMobsi(uint64_t dt) {
   if(npc.interactive()->isStaticState())
     return;

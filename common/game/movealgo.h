@@ -54,6 +54,12 @@ class MoveAlgo final {
 
     void    load(Serialize& fin);
     void    save(Serialize& fout) const;
+    // opengothic-rs (task 5.18): state stock saves leave out, in Npc::save's fork-only
+    // entry. The ground/water ray caches: without them the first step after a load
+    // casts new rays and lands NPCs at other heights than the run that saved. lastBounce:
+    // without it an NPC that just bumped into something walks/turns differently.
+    void    saveOgState(Serialize& fout) const;
+    void    loadOgState(Serialize& fin);
 
     void    tick(uint64_t dt, MvFlags fai=NoFlag);
 

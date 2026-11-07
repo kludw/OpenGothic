@@ -1,5 +1,7 @@
 #include "serialize.h"
 
+#include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <exception>
 
@@ -78,7 +80,12 @@ Serialize::Serialize(Tempest::IDevice& fin) : fin(&fin) {
     throw std::runtime_error("unable to read game archive");
   }
 
+Serialize::Serialize(std::string& json) : dump(&json) {
+  }
+
 Serialize::~Serialize() noexcept(false) {
+  if(dump!=nullptr && dumpEntry)
+    dump->append("]]");
   if(fin!=nullptr)
     mz_zip_reader_end(&impl);
   if(fout==nullptr)
@@ -118,6 +125,16 @@ void Serialize::closeEntry() {
   }
 
 bool Serialize::implSetEntry(std::string_view fname) {
+  if(dump!=nullptr) {
+    if(dumpEntry)
+      dump->append("]],\n");
+    dump->push_back('[');
+    jsonString(*dump,fname);
+    dump->append(",[");
+    dumpEntry = true;
+    dumpFirst = true;
+    return true;
+    }
   size_t prefix = 0;
   if(fout!=nullptr) {
     while(prefix<fname.size() && prefix<entryName.size()) {
@@ -183,6 +200,10 @@ uint32_t Serialize::implDirectorySize(std::string_view e) {
   }
 
 void Serialize::writeBytes(const void* buf, size_t sz) {
+  if(dump!=nullptr) {
+    dumpHex(buf,sz);
+    return;
+    }
   if(sz==0)
     return;
   size_t at = entryBuf.size();
@@ -198,6 +219,10 @@ void Serialize::readBytes(void* buf, size_t sz) {
   }
 
 void Serialize::implWrite(const std::string& s) {
+  if(dump!=nullptr) {
+    implWrite(std::string_view(s));
+    return;
+    }
   uint32_t sz=uint32_t(s.size());
   implWrite(sz);
   writeBytes(s.data(),sz);
@@ -212,6 +237,12 @@ void Serialize::implRead(std::string& s) {
   }
 
 void Serialize::implWrite(std::string_view s) {
+  if(dump!=nullptr) {
+    std::string v;
+    jsonString(v,s);
+    dumpRaw(v);
+    return;
+    }
   uint32_t sz=uint32_t(s.size());
   implWrite(sz);
   writeBytes(s.data(),sz);
@@ -295,6 +326,12 @@ void Serialize::implWrite(const Tempest::Pixmap& p) {
   }
 
 void Serialize::implWrite(const Tempest::Pixmap& p, const char* ext) {
+  if(dump!=nullptr) {
+    // The preview screenshot is render-only: its size stands for it.
+    dumpNum(uint64_t(p.w()));
+    dumpNum(uint64_t(p.h()));
+    return;
+    }
   std::vector<uint8_t> tmp;
   tmp.reserve(4*1024*1024);
   Tempest::MemWriter w{tmp};
@@ -355,6 +392,10 @@ void Serialize::implRead(FpLock &fp) {
   }
 
 void Serialize::implWrite(const zenkit::AnimationSample& i) {
+  if(dump!=nullptr) {
+    dumpFloats(&i,sizeof(i));
+    return;
+    }
   writeBytes(&i,sizeof(i));
   }
 
@@ -365,4 +406,100 @@ void Serialize::implRead(zenkit::AnimationSample& i) {
     } else {
     readBytes (&i,sizeof(i));
     }
+  }
+
+// opengothic-rs (task 5.18): dump mode. Values are separated by commas inside the open
+// entry; a value before the first setEntry goes into an entry named "".
+void Serialize::dumpRaw(std::string_view token) {
+  if(!dumpEntry)
+    implSetEntry("");
+  if(!dumpFirst)
+    dump->push_back(',');
+  dumpFirst = false;
+  dump->append(token);
+  }
+
+void Serialize::dumpNum(int64_t v) {
+  char buf[32] = {};
+  std::snprintf(buf,sizeof(buf),"%lld",static_cast<long long>(v));
+  dumpRaw(buf);
+  }
+
+void Serialize::dumpNum(uint64_t v) {
+  char buf[32] = {};
+  std::snprintf(buf,sizeof(buf),"%llu",static_cast<unsigned long long>(v));
+  dumpRaw(buf);
+  }
+
+void Serialize::dumpFloat(float f) {
+  std::string v;
+  jsonFloat(v,f);
+  dumpRaw(v);
+  }
+
+void Serialize::dumpFloats(const void* v, size_t sz) {
+  if(sz%sizeof(float)!=0) {
+    dumpHex(v,sz);
+    return;
+    }
+  std::string out = "[";
+  for(size_t i=0; i<sz/sizeof(float); ++i) {
+    float f = 0;
+    std::memcpy(&f,static_cast<const uint8_t*>(v)+i*sizeof(float),sizeof(f));
+    if(i>0)
+      out.push_back(',');
+    jsonFloat(out,f);
+    }
+  out.push_back(']');
+  dumpRaw(out);
+  }
+
+void Serialize::dumpHex(const void* v, size_t sz) {
+  static const char digits[] = "0123456789abcdef";
+  std::string out = "\"x:";
+  for(size_t i=0; i<sz; ++i) {
+    const uint8_t b = static_cast<const uint8_t*>(v)[i];
+    out.push_back(digits[b>>4]);
+    out.push_back(digits[b&0xF]);
+    }
+  out.push_back('"');
+  dumpRaw(out);
+  }
+
+// Game strings are code-page bytes, not UTF-8: bytes >= 0x80 are written as \u00XX
+// (their Latin-1 reading), so the dump is valid JSON and every byte survives.
+void Serialize::jsonString(std::string& out, std::string_view s) {
+  static const char digits[] = "0123456789abcdef";
+  out.push_back('"');
+  for(const char c:s) {
+    const auto b = uint8_t(c);
+    if(b=='"' || b=='\\') {
+      out.push_back('\\');
+      out.push_back(char(b));
+      }
+    else if(b<0x20 || b>=0x7F) {
+      out.append("\\u00");
+      out.push_back(digits[b>>4]);
+      out.push_back(digits[b&0xF]);
+      }
+    else {
+      out.push_back(char(b));
+      }
+    }
+  out.push_back('"');
+  }
+
+// %.9g gives back the same float; NaN and infinities are no JSON numbers.
+void Serialize::jsonFloat(std::string& out, float f) {
+  if(std::isnan(f)) {
+    out.append("\"nan\"");
+    return;
+    }
+  if(std::isinf(f)) {
+    out.append(f>0 ? "\"inf\"" : "\"-inf\"");
+    return;
+    }
+  char buf[32] = {};
+  std::snprintf(buf,sizeof(buf),"%.9g",double(f));
+  out.append(buf);
   }

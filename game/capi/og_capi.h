@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-#define OG_CAPI_VERSION 19
+#define OG_CAPI_VERSION 20
 
 /* Per-frame context; only valid inside the callback that received it. Exception (v14):
  * og_init's context is also the handle for the loop functions until og_shutdown. */
@@ -613,6 +613,31 @@ typedef struct og_trace_visitor {
  * visited), OG_STATE_BAD_ARGS (outside on_frame, bad visitor), OG_STATE_EXCEPTION
  * (logged; the visit may be partial). Only inside on_frame with its ctx (main thread). */
 int og_read_world_trace(og_ctx* ctx, const og_trace_visitor* v);
+
+/* ---- World dump (v20) ------------------------------------------------------
+ * The complete saved state as canonical JSON (task 5.18): OpenGothic's own save code
+ * (GameSession::save) runs with Serialize in dump mode, so the dump holds every value a
+ * save writes, in save order. The text is a JSON array of entries ["name",[values]]
+ * (zip entry names as in a save: "header", "game/session", "worlds/<w>/npc/<i>/data",
+ * ...); values are numbers, true/false, strings (code-page bytes >= 0x80 as \u00XX),
+ * float vectors/matrices/animation samples as arrays of floats ("%.9g"; NaN and
+ * infinities as "nan"/"inf"/"-inf" strings), raw byte blocks as "x:<hex>", and the preview
+ * screenshot as its width and height (an empty one here). A length written before a string
+ * is not repeated; a vector's length is (C arrays have none). The "header" entry holds the
+ * real time of the dump. Reading changes no game state (no seam ids, no sorting); it does
+ * log the RNG save line ("ogrng: saved ...") and leave the loading-progress value (only
+ * shown while loading or saving; the next one resets it) at 80. */
+
+typedef struct og_dump_sink {
+  void* user;
+  void (*write)(void* user, const char* data, size_t len);  /* called once with the whole text;
+                                                                must not throw or unwind */
+} og_dump_sink;
+
+/* OG_STATE_OK (sink called once), OG_STATE_NOT_IN_GAME (no world or player, loading,
+ * saving: sink not called), OG_STATE_BAD_ARGS (outside on_frame, NULL sink or write),
+ * OG_STATE_EXCEPTION (logged; sink not called). Only inside on_frame (main thread). */
+int og_dump_world(og_ctx* ctx, const og_dump_sink* sink);
 
 /* ---- Player input (v18) -------------------------------------------------------
  * The input that reaches PlayerControl, for exact replays (task 5.6): key presses and

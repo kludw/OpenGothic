@@ -200,4 +200,5 @@ class WorldObjects final {
     static bool      isTargetedBy(Npc& npc,Npc& by);
   friend struct OgRoutineDump; // opengothic-rs (task 5.14)
   friend struct OgSimRoutine;  // opengothic-rs (task 5.14 part 2)
+  friend struct OgSaveRefs;    // opengothic-rs (task 5.18)
   };

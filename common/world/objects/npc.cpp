@@ -258,6 +258,13 @@ void Npc::save(Serialize &fout, size_t id, std::string_view directory) {
   fout.setEntry("worlds/",fout.worldName(),directory,id,"/inventory");
   if(!invent.isEmpty() || id==size_t(-1))
     invent.save(fout);
+
+  // opengothic-rs (task 5.18): fork-only entry (state stock saves leave out, so a load
+  // continues like the run that saved); stock OpenGothic never opens it. aiOutputBarrier:
+  // without it haveOutput() is false after a load and a talking NPC starts the next line.
+  fout.setEntry("worlds/",fout.worldName(),directory,id,"/opengothic-rs");
+  fout.write(aiOutputBarrier);
+  mvAlgo.saveOgState(fout);
   }
 
 void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
@@ -327,6 +334,11 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
 
   if(fin.setEntry("worlds/",fin.worldName(),directory,id,"/inventory"))
     invent.load(fin,*this);
+  // opengothic-rs (task 5.18): absent in stock saves, then the caches start empty as stock.
+  if(fin.setEntry("worlds/",fin.worldName(),directory,id,"/opengothic-rs")) {
+    fin.read(aiOutputBarrier);
+    mvAlgo.loadOgState(fin);
+    }
 
   // post-alignment
   updateTransform();

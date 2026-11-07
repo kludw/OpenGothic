@@ -17,6 +17,7 @@
 #include "camera.h"
 #include "gothic.h"
 #include "capi/ogrng.h"
+#include "capi/ogsaverefs.h"
 #include "commandline.h"
 #include "script/scripttrace.h"
 
@@ -170,6 +171,9 @@ GameSession::GameSession(Serialize &fin) {
 
   fin.setEntry("game/daedalus");
   vm->loadVar(fin);
+  // opengothic-rs (task 5.18): absent in stock saves; then those symbols stay empty, as stock.
+  if(fin.setEntry("opengothic-rs/daedalus-refs"))
+    OgSaveRefs::load(fin,*vm,*wrld);
 
   if(auto hero = wrld->player())
     vm->setInstanceNPC("HERO",*hero);
@@ -241,6 +245,9 @@ void GameSession::save(Serialize &fout, std::string_view name, const Pixmap& scr
 
   fout.setEntry("game/daedalus");
   vm->saveVar(fout);
+  // opengothic-rs: fork-only entry (task 5.18); stock OpenGothic never opens it.
+  fout.setEntry("opengothic-rs/daedalus-refs");
+  OgSaveRefs::save(fout,*vm,*wrld);
 
   // opengothic-rs: fork-only entry (task 5.4); stock OpenGothic never opens it.
   fout.setEntry("opengothic-rs/rng");

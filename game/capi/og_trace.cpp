@@ -1,6 +1,7 @@
 // opengothic-rs: og_read_world_trace (game/capi/og_capi.h, v17): the per-step world trace
 // of task 5.5. Read-only: unlike og_read_state it hands out no seam ids (og_ids.h gives
 // ids on first read, an observer effect a trace must not have) and sorts no inventory.
+// Also og_dump_world (v20, task 5.18): the save written through Serialize's dump mode.
 
 #include "og_capi.h"
 
@@ -17,6 +18,7 @@
 #include "game/gamescript.h"
 #include "game/gamesession.h"
 #include "game/questlog.h"
+#include "game/serialize.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
@@ -201,6 +203,39 @@ int og_read_world_trace(og_ctx* ctx, const og_trace_visitor* v) {
     }
   catch(...) {
     Tempest::Log::e("og_read_world_trace: unknown exception");
+    }
+  return OG_STATE_EXCEPTION;
+  }
+
+int og_dump_world(og_ctx* ctx, const og_dump_sink* sink) {
+  try {
+    if(ctx==nullptr || !ctx->inFrame) {
+      Tempest::Log::e("og_dump_world: called outside on_frame");
+      return OG_STATE_BAD_ARGS;
+      }
+    if(sink==nullptr || sink->write==nullptr) {
+      Tempest::Log::e("og_dump_world: invalid sink");
+      return OG_STATE_BAD_ARGS;
+      }
+    Gothic&      g       = Gothic::inst();
+    GameSession* session = g.gameSession();
+    if(g.checkLoading()!=Gothic::LoadState::Idle || g.world()==nullptr || g.player()==nullptr ||
+       session==nullptr)
+      return OG_STATE_NOT_IN_GAME;
+    std::string json = "[";
+    {
+    Serialize out(json);
+    session->save(out,"og_dump_world",Tempest::Pixmap());
+    }
+    json.push_back(']');
+    sink->write(sink->user,json.data(),json.size());
+    return OG_STATE_OK;
+    }
+  catch(const std::exception& e) {
+    Tempest::Log::e("og_dump_world: exception: ",e.what());
+    }
+  catch(...) {
+    Tempest::Log::e("og_dump_world: unknown exception");
     }
   return OG_STATE_EXCEPTION;
   }
