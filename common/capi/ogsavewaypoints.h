@@ -2,7 +2,7 @@
 // WayPoint* as its name and the load takes WayMatrix::findPoint(name), the first point of
 // that name; 33 names occur more than once in NEWWORLD and in OLDWORLD (2 in ADDONWORLD, 1 in
 // DRAGONISLAND), so an NPC on the second FP_ROAM_CITY_TO_FOREST_15 is, after a load, on
-// one 3.4 km away (UB-38). Every WayPoint* write is numbered within its entry; a write the
+// one 3.4 km away (UB-41). Every WayPoint* write is numbered within its entry; a write the
 // name alone would resolve to another point is listed with the exact point in the
 // fork-only entry "worlds/<world>/opengothic-rs/waypoints" (stock OpenGothic never opens
 // it), written after the world's entries and read before them.

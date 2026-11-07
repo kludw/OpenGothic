@@ -261,7 +261,7 @@ void Serialize::implRead(WeaponState &w) {
 
 void Serialize::implWrite(const WayPoint* wptr) {
   implWrite(wptr ? wptr->name : "");
-  const uint32_t seq = ogWpSeq++; // opengothic-rs (task 5.18, UB-38)
+  const uint32_t seq = ogWpSeq++; // opengothic-rs (task 5.18, UB-41)
   if(ctx!=nullptr)
     OgSaveWaypoints::record(*this,*ctx,seq,wptr);
   }
@@ -269,7 +269,7 @@ void Serialize::implWrite(const WayPoint* wptr) {
 void Serialize::implRead(const WayPoint*& wptr) {
   implRead(tmpStr);
   wptr = ctx==nullptr ? nullptr : ctx->findPoint(tmpStr,false);
-  const uint32_t seq = ogWpSeq++; // opengothic-rs (task 5.18, UB-38)
+  const uint32_t seq = ogWpSeq++; // opengothic-rs (task 5.18, UB-41)
   if(ctx!=nullptr && !ogWpRefs.empty())
     OgSaveWaypoints::resolve(*this,*ctx,seq,tmpStr,wptr);
   }
