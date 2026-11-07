@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-#define OG_CAPI_VERSION 20
+#define OG_CAPI_VERSION 21
 
 /* Per-frame context; only valid inside the callback that received it. Exception (v14):
  * og_init's context is also the handle for the loop functions until og_shutdown. */
@@ -71,6 +71,17 @@ int og_run(int argc, const char** argv, const og_callbacks* cb);
  * og_shutdown). Returns 0, OG_RUN_ALREADY_RUNNING, or OG_RUN_EXCEPTION (logged; the
  * partly built game is destroyed, *out_ctx stays NULL). */
 int og_init(int argc, const char** argv, const og_callbacks* cb, og_ctx** out_ctx);
+
+/* Background mode (v21, opengothic-rs focus-fix): on = the app never activates and never
+ * takes keyboard focus from the frontmost app. NSApplication's activate calls become
+ * no-ops and setActivationPolicy: keeps the policy an unbundled executable starts with
+ * (never active: keyboard input stays with the user's app; use stock behaviour to play
+ * by hand). The window stays on screen (a hidden window gets no frames). Off by default
+ * (stock behaviour). Call before og_init/og_run, on the main thread; 0 after an earlier 1
+ * doesn't undo it. Returns 1 when background mode is on, 0 when off (on == 0, or not
+ * macOS), -1 when the NSApplication methods to redirect are missing (nothing changed).
+ * Logs nothing (no log sink before og_init): the host logs the result. */
+int og_set_background(int on);
 
 /* Delivers pending window/input events (at most a bounded batch per call) and runs
  * due Tempest timers, as OpenGothic's own loop does after each event.
