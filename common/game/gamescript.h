@@ -17,6 +17,7 @@
 #include "game/constants.h"
 #include "game/aistate.h"
 #include "game/questlog.h"
+#include "capi/ogsimtables.h"
 
 class GameSession;
 class World;
@@ -59,6 +60,7 @@ class GameScript final {
       PerDist();
       int32_t range[PERC_Count] = {};
       int     at(PercType perc, int r) const;
+      int     atCpp(PercType perc, int r) const; // opengothic-rs (task 5.17): the stock at
       };
 
     bool         hasSymbolName(std::string_view fn);
@@ -182,6 +184,13 @@ class GameScript final {
     void      eventPlayAni(Npc& npc, std::string_view ani);
 
   private:
+    // opengothic-rs (task 5.17): the small session tables' og-sim hooks (capi/ogsimtables.h),
+    // defined after the bindExternal lines og-daedalus' catalog pins.
+    void         ogSimInitTables();
+    void         ogSimDropTables();
+    Attitude     guildAttitudeCpp(const Npc& p0,const Npc& p1) const;
+    Attitude     personAttitudeCpp(const Npc& p0,const Npc& p1) const;
+
     template<typename T>
     struct DetermineSignature {
       using signature = void();

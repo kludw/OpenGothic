@@ -221,6 +221,9 @@ class World final {
 
     auto         roomAt(const zenkit::BspNode &node) -> std::string_view;
     auto         portalAt(std::string_view tag) -> BspSector*;
+    // opengothic-rs (task 5.17): the room guilds' og-sim hooks (capi/ogsimtables.h).
+    int32_t      guildOfRoomCpp(std::string_view portalName);
+    void         ogSimRooms(const og_sim_table_op& op);
 
     void         initScripts(bool firstTime);
 

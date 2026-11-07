@@ -25,6 +25,7 @@
 #include "capi/ogwaynet.h"
 #include "capi/ogsim.h"
 #include "capi/ogsimwaynet.h"
+#include "capi/ogsimtables.h"
 
 const char* materialTag(ItemMaterial src) {
   switch(src) {
@@ -103,6 +104,14 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
       bsp.leaf_node_indices = std::move(world.world_bsp_tree.leaf_node_indices);
       bsp.sectorsData.resize(bsp.sectors.size());
       world.world_bsp_tree  = zenkit::BspTree();
+      // opengothic-rs (task 5.17): see capi/ogsimtables.h
+      if(OgSim::on(OG_SIM_MOD_ROOMS)) {
+        std::vector<og_sim_str> names;
+        for(auto& i:bsp.sectors)
+          names.push_back(OgSimTables::str(i.name));
+        og_sim_table_op op = {OG_SIM_ROOMS_WORLD, 0, 0, 0, nullptr, 0, {}, {}, names.data(), uint32_t(names.size())};
+        ogSimRooms(op);
+        }
     }
     loadProgress(50);
 
@@ -138,6 +147,19 @@ World::~World() {
   // are no longer the delegation's.
   if(wmatrix!=nullptr && OgSim::on(OG_SIM_MOD_WAYNET))
     OgSimWaynet::unloaded(*wmatrix);
+  og_sim_table_op op = {OG_SIM_ROOMS_DROP, 0, 0, 0, nullptr, 0, {}, {}, nullptr, 0};
+  OgSimTables::changed(OG_SIM_MOD_ROOMS, this, op, nullptr, 0);
+  }
+
+void World::ogSimRooms(const og_sim_table_op& op) {
+  if(!OgSim::on(OG_SIM_MOD_ROOMS))
+    return;
+  std::vector<int32_t> guilds(bsp.sectorsData.size());
+  for(size_t i=0; i<guilds.size(); ++i)
+    guilds[i] = bsp.sectorsData[i].guild;
+  OgSimTables::changed(OG_SIM_MOD_ROOMS, this, op, guilds);
+  for(size_t i=0; i<guilds.size(); ++i)
+    bsp.sectorsData[i].guild = guilds[i];
   }
 
 void World::createPlayer(std::string_view cls) {
@@ -194,6 +216,8 @@ void World::load(Serialize &fin) {
     fin.read(tag,guild);
     if(auto p = portalAt(tag))
       p->guild = guild;
+    og_sim_table_op op = {OG_SIM_ROOMS_LOAD, guild, 0, 0, nullptr, 0, OgSimTables::str(tag), {}, nullptr, 0};
+    ogSimRooms(op);
     }
 
   wobj.load(fin);
@@ -1052,24 +1076,33 @@ void World::assignRoomToGuild(std::string_view r, int32_t guildId) {
   for(auto& i:room)
     i = char(std::toupper(i));
 
+  og_sim_table_op op = {OG_SIM_ROOMS_ASSIGN, guildId, 0, 0, nullptr, 0, OgSimTables::str(r), {}, nullptr, 0};
   if(auto rx=portalAt(room)){
     rx->guild=guildId;
+    ogSimRooms(op);
     return;
     }
 
   Tempest::Log::d("room not found: ",room);
+  ogSimRooms(op);
   }
 
 int32_t World::guildOfRoom(const Tempest::Vec3& pos) {
   std::string_view tg = roomAt(pos);
+  og_sim_table_op  op = {OG_SIM_ROOMS_OF_ROOM, 0, 0, 0, nullptr, 0, OgSimTables::str(tg), {}, nullptr, 0};
   if(auto room=portalAt(tg)) {
     if(room->guild==GIL_PUBLIC) //FIXME: proper portal implementation
-      return room->guild;
+      return OgSimTables::query(OG_SIM_MOD_ROOMS, this, op, room->guild);
     }
-  return GIL_NONE;
+  return OgSimTables::query(OG_SIM_MOD_ROOMS, this, op, GIL_NONE);
   }
 
 int32_t World::guildOfRoom(std::string_view portalName) {
+  og_sim_table_op op = {OG_SIM_ROOMS_OF_PORTAL, 0, 0, 0, nullptr, 0, OgSimTables::str(portalName), {}, nullptr, 0};
+  return OgSimTables::query(OG_SIM_MOD_ROOMS, this, op, guildOfRoomCpp(portalName));
+  }
+
+int32_t World::guildOfRoomCpp(std::string_view portalName) {
   size_t b = portalName.find(':');
   if(b==std::string::npos)
     return -1;

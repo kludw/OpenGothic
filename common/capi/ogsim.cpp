@@ -33,7 +33,7 @@ extern "C" int32_t og_sim_set(const og_sim_vtable* vt, const uint8_t* m) {
      !vt->routine_end_time || !vt->routine_mob_set || !vt->routine_mob_load ||
      !vt->routine_mob_drop || !vt->routine_mob_tick || !vt->routine_mob_reset ||
      !vt->routine_mob_scheme_state || !vt->routine_mismatch || !vt->damage ||
-     !vt->fight_load || !vt->fight) {
+     !vt->fight_load || !vt->fight || !vt->quest || !vt->table || !vt->query) {
     Log::e("og_sim_set: table with a missing callback");
     return -1;
     }
@@ -42,7 +42,9 @@ extern "C" int32_t og_sim_set(const og_sim_vtable* vt, const uint8_t* m) {
     modes[i] = m[i];
   Log::i("og_sim: time mode ",int(modes[OG_SIM_MOD_TIME]),", rng mode ",int(modes[OG_SIM_MOD_RNG]),
          ", waynet mode ",int(modes[OG_SIM_MOD_WAYNET]),", routine mode ",int(modes[OG_SIM_MOD_ROUTINE]),
-         ", damage mode ",int(modes[OG_SIM_MOD_DAMAGE]),", fight AI mode ",int(modes[OG_SIM_MOD_FIGHTAI]));
+         ", damage mode ",int(modes[OG_SIM_MOD_DAMAGE]),", fight AI mode ",int(modes[OG_SIM_MOD_FIGHTAI]),
+         ", questlog mode ",int(modes[OG_SIM_MOD_QUESTLOG]),", attitude mode ",int(modes[OG_SIM_MOD_ATTITUDE]),
+         ", perc_ranges mode ",int(modes[OG_SIM_MOD_PERC_RANGES]),", rooms mode ",int(modes[OG_SIM_MOD_ROOMS]));
   return 0;
   }
 

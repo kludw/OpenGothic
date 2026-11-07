@@ -45,4 +45,6 @@ class QuestLog final {
     Quest* find(std::string_view name);
 
     std::vector<Quest> quests;
+
+  friend struct OgSimQuestAccess; // opengothic-rs (task 5.17)
   };

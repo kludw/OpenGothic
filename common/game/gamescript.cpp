@@ -79,12 +79,12 @@ GameScript::PerDist::PerDist() {
   }
 
 int GameScript::PerDist::at(PercType perc, int r) const {
-  if(perc>=PERC_Count)
-    return r;
-  auto rr = range[perc];
-  if(rr>0)
-    return rr;
-  return r;
+  // opengothic-rs (task 5.17): perception ranges' og-sim delegation; the stock lookup is
+  // atCpp, defined after the bindExternal lines og-daedalus' catalog pins (this body keeps
+  // their line numbers).
+  og_sim_table_op op = {OG_SIM_PERC_AT, int32_t(perc), r, 0, nullptr, 0, {}, {}, nullptr, 0};
+  int32_t cpp = atCpp(perc, r);
+  return OgSimTables::query(OG_SIM_MOD_PERC_RANGES, this, op, cpp);
   }
 
 
@@ -105,7 +105,7 @@ GameScript::GameScript(GameSession &owner)
   }
 
 GameScript::~GameScript() {
-  Gothic::inst().onSettingsChanged.ubind(this,&GameScript::initSettings);
+  Gothic::inst().onSettingsChanged.ubind(this,&GameScript::initSettings); ogSimDropTables(); // opengothic-rs (5.17)
   }
 
 void GameScript::initCommon() {
@@ -387,6 +387,7 @@ void GameScript::initCommon() {
   auto* tblSz = vm.find_symbol_by_name("TAB_ANZAHL");
   gilTblSize = tblSz!=nullptr ? size_t(std::sqrt(tblSz->get_int())) : 0;
   gilAttitudes.resize(gilCount*gilCount,ATT_HOSTILE);
+  ogSimInitTables();
   wld_exchangeguildattitudes("GIL_ATTITUDES");
 
   auto id = vm.find_symbol_by_name("Gil_Values");
@@ -545,6 +546,8 @@ void GameScript::saveQuests(Serialize &fout) {
 
 void GameScript::loadQuests(Serialize& fin) {
   quests.load(fin);
+  og_sim_table_op qop = {OG_SIM_QUEST_LOAD, 0, 0, 0, nullptr, 0, {}, {}, nullptr, 0};
+  OgSimTables::quest(quests, qop);
   uint32_t sz=0;
   fin.read(sz);
   for(size_t i=0;i<sz;++i){
@@ -554,6 +557,8 @@ void GameScript::loadQuests(Serialize& fin) {
     }
 
   fin.read(gilAttitudes);
+  og_sim_table_op aop = {OG_SIM_ATT_LOAD, 0, 0, 0, gilAttitudes.data(), uint32_t(gilAttitudes.size()), {}, {}, nullptr, 0};
+  OgSimTables::changed(OG_SIM_MOD_ATTITUDE, this, aop, gilAttitudes);
   }
 
 void GameScript::saveVar(Serialize &fout) {
@@ -772,12 +777,16 @@ void GameScript::loadPerc(Serialize& fin) {
   uint32_t count = 0;
   fin.read(count);
   if(count!=PERC_Count) {
+    og_sim_table_op op = {OG_SIM_PERC_LOAD, int32_t(count), 0, 0, nullptr, 0, {}, {}, nullptr, 0};
+    OgSimTables::changed(OG_SIM_MOD_PERC_RANGES, &perceptionRanges, op, perceptionRanges.range, PERC_Count);
     if(hasSymbolName("initPerceptions"))
       vm.call_function("initPerceptions");
     return;
     }
   for(size_t i=0; i<PERC_Count; ++i)
     fin.read(perceptionRanges.range[i]);
+  og_sim_table_op op = {OG_SIM_PERC_LOAD, int32_t(count), 0, 0, perceptionRanges.range, PERC_Count, {}, {}, nullptr, 0};
+  OgSimTables::changed(OG_SIM_MOD_PERC_RANGES, &perceptionRanges, op, perceptionRanges.range, PERC_Count);
   }
 
 void GameScript::resetVarPointers() {
@@ -1495,6 +1504,11 @@ bool GameScript::ogCallInt(Npc& npc, std::string_view func, int32_t arg) {
   }
 
 Attitude GameScript::guildAttitude(const Npc &p0, const Npc &p1) const {
+  og_sim_table_op op = {OG_SIM_ATT_GUILD, int32_t(p0.guild()), int32_t(p1.guild()), 0, nullptr, 0, {}, {}, nullptr, 0};
+  return Attitude(OgSimTables::query(OG_SIM_MOD_ATTITUDE, this, op, guildAttitudeCpp(p0,p1)));
+  }
+
+Attitude GameScript::guildAttitudeCpp(const Npc &p0, const Npc &p1) const {
   auto selfG = std::min<size_t>(gilCount-1,p0.guild());
   auto npcG  = std::min<size_t>(gilCount-1,p1.guild());
   auto ret   = gilAttitudes[selfG*gilCount+npcG];
@@ -1502,15 +1516,22 @@ Attitude GameScript::guildAttitude(const Npc &p0, const Npc &p1) const {
   }
 
 Attitude GameScript::personAttitude(const Npc &p0, const Npc &p1) const {
+  const int32_t att[2] = {p0.attitude(), p1.attitude()};
+  og_sim_table_op op = {OG_SIM_ATT_PERSON, int32_t(p0.guild()), int32_t(p1.guild()),
+                        (p0.isPlayer() ? 1 : 0) | (p1.isPlayer() ? 2 : 0), att, 2, {}, {}, nullptr, 0};
+  return Attitude(OgSimTables::query(OG_SIM_MOD_ATTITUDE, this, op, personAttitudeCpp(p0,p1)));
+  }
+
+Attitude GameScript::personAttitudeCpp(const Npc &p0, const Npc &p1) const {
   if(!p0.isPlayer() && !p1.isPlayer())
-    return guildAttitude(p0,p1);
+    return guildAttitudeCpp(p0,p1);
 
   Attitude att=ATT_NULL;
   const Npc& npc = p0.isPlayer() ? p1 : p0;
   att = npc.attitude();
   if(att!=ATT_NULL)
     return att;
-  att = guildAttitude(p0,p1);
+  att = guildAttitudeCpp(p0,p1);
   return att;
   }
 
@@ -1809,25 +1830,63 @@ int GameScript::wld_getformerplayerportalguild() {
   }
 
 void GameScript::wld_setguildattitude(int gil1, int att, int gil2) {
-  if(gil1<0 || gil2<0 || gil1>=int(gilCount) || gil2>=int(gilCount))
+  og_sim_table_op op = {OG_SIM_ATT_SET, gil1, att, gil2, nullptr, 0, {}, {}, nullptr, 0};
+  if(gil1<0 || gil2<0 || gil1>=int(gilCount) || gil2>=int(gilCount)) {
+    OgSimTables::changed(OG_SIM_MOD_ATTITUDE, this, op, gilAttitudes);
     return;
+    }
   gilAttitudes[size_t(gil1)*gilCount+size_t(gil2)] = att;
+  OgSimTables::changed(OG_SIM_MOD_ATTITUDE, this, op, gilAttitudes);
   }
 
 int GameScript::wld_getguildattitude(int gil1, int gil2) {
+  og_sim_table_op op = {OG_SIM_ATT_GET, gil1, gil2, 0, nullptr, 0, {}, {}, nullptr, 0};
   if(gil1<0 || gil2<0 || gil1>=int(gilCount) || gil2>=int(gilCount))
-    return ATT_HOSTILE; // error
-  return gilAttitudes[size_t(gil1)*gilCount+size_t(gil2)];
+    return OgSimTables::query(OG_SIM_MOD_ATTITUDE, this, op, ATT_HOSTILE); // error
+  return OgSimTables::query(OG_SIM_MOD_ATTITUDE, this, op, gilAttitudes[size_t(gil1)*gilCount+size_t(gil2)]);
   }
 
 void GameScript::wld_exchangeguildattitudes(std::string_view name) {
+  og_sim_table_op op = {OG_SIM_ATT_EXCHANGE, 0, int32_t(gilTblSize), 0, nullptr, 0, {}, {}, nullptr, 0};
   auto guilds = vm.find_symbol_by_name(name);
-  if(guilds==nullptr)
+  if(guilds==nullptr) {
+    OgSimTables::changed(OG_SIM_MOD_ATTITUDE, this, op, gilAttitudes);
     return;
-  for(size_t i=0;i<gilTblSize;++i) {
-    for(size_t r=0;r<gilTblSize;++r)
-      gilAttitudes[i*gilCount+r] = guilds->get_int(uint16_t(i * gilTblSize + r));
     }
+  std::vector<int32_t> values;
+  for(size_t i=0;i<gilTblSize;++i) {
+    for(size_t r=0;r<gilTblSize;++r) {
+      gilAttitudes[i*gilCount+r] = guilds->get_int(uint16_t(i * gilTblSize + r));
+      values.push_back(gilAttitudes[i*gilCount+r]);
+      }
+    }
+  op.a           = 1;
+  op.values      = values.data();
+  op.value_count = uint32_t(values.size());
+  OgSimTables::changed(OG_SIM_MOD_ATTITUDE, this, op, gilAttitudes);
+  }
+
+int GameScript::PerDist::atCpp(PercType perc, int r) const {
+  if(perc>=PERC_Count)
+    return r;
+  auto rr = range[perc];
+  if(rr>0)
+    return rr;
+  return r;
+  }
+
+void GameScript::ogSimInitTables() {
+  og_sim_table_op op = {OG_SIM_ATT_INIT, int32_t(gilCount), int32_t(gilTblSize), 0, nullptr, 0, {}, {}, nullptr, 0};
+  OgSimTables::changed(OG_SIM_MOD_ATTITUDE, this, op, gilAttitudes);
+  }
+
+void GameScript::ogSimDropTables() {
+  og_sim_table_op att = {OG_SIM_ATT_DROP, 0, 0, 0, nullptr, 0, {}, {}, nullptr, 0};
+  OgSimTables::changed(OG_SIM_MOD_ATTITUDE, this, att, nullptr, 0);
+  og_sim_table_op perc = {OG_SIM_PERC_DROP, 0, 0, 0, nullptr, 0, {}, {}, nullptr, 0};
+  OgSimTables::changed(OG_SIM_MOD_PERC_RANGES, &perceptionRanges, perc, nullptr, 0);
+  og_sim_table_op quest = {OG_SIM_QUEST_DROP, 0, 0, 0, nullptr, 0, {}, {}, nullptr, 0};
+  OgSimTables::quest(quests, quest);
   }
 
 // Included here, not at the top: lane B's external catalog (og-daedalus) pins the
@@ -3402,6 +3461,8 @@ void GameScript::ta_min(std::shared_ptr<zenkit::INpc> npcRef, int start_h, int s
 void GameScript::log_createtopic(std::string_view topicName, int section) {
   if(section==QuestLog::Mission || section==QuestLog::Note)
     quests.add(topicName,QuestLog::Section(section));
+  og_sim_table_op op = {OG_SIM_QUEST_CREATE, section, 0, 0, nullptr, 0, OgSimTables::str(topicName), {}, nullptr, 0};
+  OgSimTables::quest(quests, op);
   }
 
 void GameScript::log_settopicstatus(std::string_view topicName, int status) {
@@ -3410,10 +3471,15 @@ void GameScript::log_settopicstatus(std::string_view topicName, int status) {
      status==int32_t(QuestLog::Status::Failed ) ||
      status==int32_t(QuestLog::Status::Obsolete))
     quests.setStatus(topicName,QuestLog::Status(status));
+  og_sim_table_op op = {OG_SIM_QUEST_STATUS, status, 0, 0, nullptr, 0, OgSimTables::str(topicName), {}, nullptr, 0};
+  OgSimTables::quest(quests, op);
   }
 
 void GameScript::log_addentry(std::string_view topicName, std::string_view entry) {
   quests.addEntry(topicName,entry);
+  og_sim_table_op op = {OG_SIM_QUEST_ENTRY, 0, 0, 0, nullptr, 0, OgSimTables::str(topicName),
+                        OgSimTables::str(entry), nullptr, 0};
+  OgSimTables::quest(quests, op);
   }
 
 void GameScript::equipitem(std::shared_ptr<zenkit::INpc> npcRef, int cls) {
@@ -3442,9 +3508,10 @@ void GameScript::createinvitems(std::shared_ptr<zenkit::INpc> npcRef, int itemIn
   }
 
 void GameScript::perc_setrange(int perc, int dist) {
-  if(perc<0 || perc>=PERC_Count)
-    return;
-  perceptionRanges.range[perc] = dist;
+  og_sim_table_op op = {OG_SIM_PERC_SET, perc, dist, 0, nullptr, 0, {}, {}, nullptr, 0};
+  if(perc>=0 && perc<PERC_Count)
+    perceptionRanges.range[perc] = dist;
+  OgSimTables::changed(OG_SIM_MOD_PERC_RANGES, &perceptionRanges, op, perceptionRanges.range, PERC_Count);
   }
 
 int GameScript::hlp_getinstanceid(std::shared_ptr<zenkit::DaedalusInstance> instance) {

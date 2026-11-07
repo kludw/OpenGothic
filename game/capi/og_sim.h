@@ -18,7 +18,9 @@
  * loading thread (waynet_load) and the main thread; never two at once. routine: the
  * loading thread (startup scripts' TA_ and Wld_SetMobRoutine calls, save loading) and the main
  * thread; never two at once. damage, fight: the main thread; fight_load: the thread that
- * runs Gothic::setupGlobalScripts. Pointer arguments are non-null (unless documented otherwise)
+ * runs Gothic::setupGlobalScripts. quest, table, query: the loading thread (GameScript and
+ * World construction, startup scripts, save loading) and the main thread; never two at
+ * once. Pointer arguments are non-null (unless documented otherwise)
  * and valid for the call only. */
 
 #pragma once
@@ -39,7 +41,11 @@ extern "C" {
 #define OG_SIM_MOD_ROUTINE 3 /* Npc routine tables, WorldObjects mob routines (5.14) */
 #define OG_SIM_MOD_DAMAGE 4 /* DamageCalculator::damageValue, damageFall (5.15) */
 #define OG_SIM_MOD_FIGHTAI 5 /* FightAlgo's move selection, the FAI table (5.16) */
-#define OG_SIM_MODS     6
+#define OG_SIM_MOD_QUESTLOG 6 /* QuestLog and Log_CreateTopic/SetTopicStatus/AddEntry (5.17) */
+#define OG_SIM_MOD_ATTITUDE 7 /* GameScript's guild attitude table, guild/personAttitude (5.17) */
+#define OG_SIM_MOD_PERC_RANGES 8 /* GameScript::PerDist: Perc_SetRange, PerDist::at (5.17) */
+#define OG_SIM_MOD_ROOMS 9 /* World's portal-room guilds: assignRoomToGuild, guildOfRoom (5.17) */
+#define OG_SIM_MODS     10
 
 /* GameSession's clock fields. */
 typedef struct og_sim_clock {
@@ -243,6 +249,75 @@ typedef struct og_sim_fight_out {
   int32_t            result;
   } og_sim_fight_out;
 
+/* Bytes, not NUL-terminated; `data` may be NULL when `len` is 0. */
+typedef struct og_sim_str {
+  const uint8_t* data;
+  uint32_t       len;
+  } og_sim_str;
+
+/* One QuestLog::Quest. */
+typedef struct og_sim_quest {
+  og_sim_str        name;
+  uint32_t          section;      /* QuestLog::Section */
+  uint32_t          status;       /* QuestLog::Status */
+  const og_sim_str* entries;      /* may be NULL when entry_count is 0 */
+  uint32_t          entry_count;
+  } og_sim_quest;
+
+/* USE mode: replaces the quest log the quest call was about with `quests` (copied). Only
+ * valid during that call. */
+typedef void (*og_sim_quest_adopt)(void* ctx, const og_sim_quest* quests, uint32_t count);
+
+/* An operation on a small session table (quest, table, query); fields an op doesn't
+ * name are 0/empty. */
+typedef struct og_sim_table_op {
+  uint32_t          op;
+  int32_t           a, b, c;
+  const int32_t*    values;       /* may be NULL when value_count is 0 */
+  uint32_t          value_count;
+  og_sim_str        str, str2;
+  const og_sim_str* names;        /* may be NULL when name_count is 0 */
+  uint32_t          name_count;
+  } og_sim_table_op;
+
+/* quest ops (key: the QuestLog's address). */
+#define OG_SIM_QUEST_CREATE 0  /* Log_CreateTopic(str, a = section) */
+#define OG_SIM_QUEST_STATUS 1  /* Log_SetTopicStatus(str, a = status) */
+#define OG_SIM_QUEST_ENTRY  2  /* Log_AddEntry(str, str2) */
+#define OG_SIM_QUEST_LOAD   3  /* GameScript::loadQuests read the log: `cpp` is the save's */
+#define OG_SIM_QUEST_DROP   4  /* ~GameScript */
+
+/* table/query ops of OG_SIM_MOD_ATTITUDE (key: the GameScript's address; the table is
+ * gilAttitudes). */
+#define OG_SIM_ATT_INIT     0  /* initCommon: a = GIL_MAX, b = sqrt(TAB_ANZAHL), after the
+                                  resize to a*a (ATT_HOSTILE) */
+#define OG_SIM_ATT_EXCHANGE 1  /* Wld_ExchangeGuildAttitudes: a = 1 and `values` the b*b ints
+                                  read from the symbol, a = 0 when there is no symbol */
+#define OG_SIM_ATT_SET      2  /* Wld_SetGuildAttitude(a, b, c) */
+#define OG_SIM_ATT_LOAD     3  /* loadQuests: `values` the save's table */
+#define OG_SIM_ATT_DROP     4  /* ~GameScript: table NULL */
+#define OG_SIM_ATT_GET      0  /* query: Wld_GetGuildAttitude(a, b) */
+#define OG_SIM_ATT_GUILD    1  /* query: guildAttitude, a/b = the NPCs' guild() (uint32 bits) */
+#define OG_SIM_ATT_PERSON   2  /* query: personAttitude, a/b as GUILD, c = bit 0 first NPC
+                                  isPlayer(), bit 1 second; values[0..2] = their attitude() */
+
+/* table/query ops of OG_SIM_MOD_PERC_RANGES (key: the PerDist's address; the table is
+ * PerDist::range, PERC_Count entries). */
+#define OG_SIM_PERC_SET  0  /* Perc_SetRange(a, b) */
+#define OG_SIM_PERC_LOAD 1  /* loadPerc: a = the save's count, `values` its ranges when a is
+                               PERC_Count (else none: initPerceptions' sets follow) */
+#define OG_SIM_PERC_DROP 2  /* ~GameScript: table NULL */
+#define OG_SIM_PERC_AT   0  /* query: PerDist::at(a, b) */
+
+/* table/query ops of OG_SIM_MOD_ROOMS (key: the World's address; the table is
+ * sectorsData's guilds, one per BSP sector). */
+#define OG_SIM_ROOMS_WORLD     0  /* World's constructor: `names` the sectors' names */
+#define OG_SIM_ROOMS_ASSIGN    1  /* Wld_AssignRoomToGuild(str, a) */
+#define OG_SIM_ROOMS_LOAD      2  /* World::load: one saved pair (str, a) */
+#define OG_SIM_ROOMS_DROP      3  /* ~World: table NULL */
+#define OG_SIM_ROOMS_OF_ROOM   0  /* query: guildOfRoom(pos), str = roomAt(pos) */
+#define OG_SIM_ROOMS_OF_PORTAL 1  /* query: guildOfRoom(str) */
+
 /* waynet_way_to's return value: keep the C++ path. */
 #define OG_SIM_KEEP_PATH 0xFFFFFFFFu
 
@@ -372,6 +447,21 @@ typedef struct og_sim_vtable {
                 const og_sim_damage_draw* draws, uint32_t draw_count,
                 const og_sim_fight_state* before, const og_sim_fight_out* cpp,
                 og_sim_fight_out* out);
+  /* The quest log `log` changed (OG_SIM_QUEST_*): `cpp` is C++'s log after it, in order.
+   * Rust applies the same op to its own log and compares; in USE mode it calls
+   * adopt(ctx, its log) and C++ takes that (DROP: `cpp` NULL, no adopt). */
+  void (*quest)(void* user, uint64_t log, const og_sim_table_op* op, const og_sim_quest* cpp,
+                uint32_t cpp_count, og_sim_quest_adopt adopt, void* ctx);
+  /* A table of `module` (ATTITUDE, PERC_RANGES, ROOMS) changed: `table` holds C++'s `len`
+   * entries after the op (DROP: NULL, 0). Rust applies the op to its own table of `key`
+   * and compares; in USE mode it overwrites `table` with its own (when the lengths agree;
+   * else a mismatch, C++'s kept). */
+  void (*table)(void* user, uint32_t module, uint64_t key, const og_sim_table_op* op,
+                int32_t* table, uint32_t len);
+  /* A read of a table of `module`; `cpp` is C++'s answer. Returns the answer to use
+   * (Rust's in USE mode). */
+  int32_t (*query)(void* user, uint32_t module, uint64_t key, const og_sim_table_op* op,
+                   int32_t cpp);
   } og_sim_vtable;
 
 /* Registers the table (copied) and the modes before og_init/og_run and before
