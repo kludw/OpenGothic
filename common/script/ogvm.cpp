@@ -110,6 +110,8 @@ class OgVm::Rust final {
       }
 
     void releaseAll() {
+      if(pinned.empty())
+        return;
       // Taken out first: an instance's destructor may run below and must not touch the list.
       std::vector<uint32_t> slots;
       slots.swap(pinned);
@@ -325,13 +327,30 @@ class OgVm::Rust final {
       }
 
     int32_t callExternal(std::string_view ext, const og_script_value* args, size_t count, uint32_t retKind, og_script_value& ret) {
+      auto* sym = owner->zk->find_symbol_by_name(ext);
+      if(sym==nullptr)
+        return runExternal(nullptr, ext, args, count, retKind, ret);
+      return callExternal(sym->index(), args, count, retKind, ret);
+      }
+
+    int32_t callExternal(uint32_t symbol, const og_script_value* args, size_t count, uint32_t retKind, og_script_value& ret) {
       OgVm& vm = *owner;
-      auto* cb = vm.external(ext);
+      if(auto* cb = vm.external(symbol))
+        return runExternal(cb, {}, args, count, retKind, ret);
+      auto* sym = vm.zk->find_symbol_by_index(symbol);
+      if(sym==nullptr)
+        throw std::runtime_error("og_script_call_external_index: no symbol " + std::to_string(symbol));
+      return runExternal(nullptr, sym->name(), args, count, retKind, ret);
+      }
+
+    // `name` only matters without a callback: the default external gets it.
+    int32_t runExternal(const External* cb, std::string_view name, const og_script_value* args, size_t count,
+                        uint32_t retKind, og_script_value& ret) {
+      OgVm& vm = *owner;
       if(cb==nullptr) {
         if(!vm.defaultExternal)
           return OG_SCRIPT_NO_EXTERNAL;
-        auto* sym = vm.zk->find_symbol_by_name(ext);
-        vm.defaultExternal(sym!=nullptr ? std::string_view(sym->name()) : ext);
+        vm.defaultExternal(name);
         ret = {};
         ret.kind = retKind;
         return OG_SCRIPT_OK;
@@ -418,7 +437,7 @@ OgVm::OgVm(zenkit::DaedalusScript&& script, uint8_t flags, std::string name, std
 
 OgVm::OgVm(OgVm&& other) noexcept
   : zk(std::move(other.zk)), vmName(std::move(other.vmName)), externals(std::move(other.externals)),
-    defaultExternal(std::move(other.defaultExternal)), rust(std::move(other.rust)) {
+    externalsByIndex(std::move(other.externalsByIndex)), defaultExternal(std::move(other.defaultExternal)), rust(std::move(other.rust)) {
   if(rust!=nullptr)
     rust->owner = this;
   }
@@ -433,6 +452,7 @@ OgVm& OgVm::operator=(OgVm&& other) noexcept {
   zk              = std::move(other.zk);
   vmName          = std::move(other.vmName);
   externals       = std::move(other.externals);
+  externalsByIndex = std::move(other.externalsByIndex);
   defaultExternal = std::move(other.defaultExternal);
   rust            = std::move(other.rust);
   if(rust!=nullptr)
@@ -448,14 +468,14 @@ OgVm::~OgVm() {
     ScriptTrace::vmGone(*zk);
   }
 
-const OgVm::External* OgVm::external(std::string_view name) const {
-  auto* sym = zk->find_symbol_by_name(name);
-  if(sym==nullptr)
-    return nullptr;
-  auto it = externals.find(sym->name());
-  if(it==externals.end())
-    return nullptr;
-  return &it->second;
+const OgVm::External* OgVm::external(uint32_t symbol) const {
+  return symbol<externalsByIndex.size() ? externalsByIndex[symbol] : nullptr;
+  }
+
+void OgVm::bindIndex(uint32_t symbol, const External* ext) {
+  if(symbol>=externalsByIndex.size())
+    externalsByIndex.resize(zk->symbols().size(), nullptr);
+  externalsByIndex.at(symbol) = ext;
   }
 
 std::shared_ptr<zenkit::DaedalusInstance> OgVm::opaqueOn(zenkit::DaedalusSymbol* sym) {
@@ -477,12 +497,12 @@ og_script_inst OgVm::backendPin(std::shared_ptr<zenkit::DaedalusInstance> const&
   return rust->pin(inst);
   }
 
-void OgVm::backendCall(const zenkit::DaedalusSymbol* s, std::vector<og_script_value>& args, uint32_t retKind, og_script_value& ret) {
+void OgVm::backendCall(const zenkit::DaedalusSymbol* s, const og_script_value* args, size_t count, uint32_t retKind, og_script_value& ret) {
   // callOn pinned the arguments before: they go with this entry.
   Rust::Entry entry(*rust);
   char err[1024];
   err[0] = '\0'; // the backend NUL-terminates a message it writes (task 4.19: no 1 KiB memset per entry)
-  auto st = backend.call_function(rust->vm, s->index(), args.data(), args.size(), retKind, &ret, err, sizeof(err));
+  auto st = backend.call_function(rust->vm, s->index(), args, count, retKind, &ret, err, sizeof(err));
   rust->check(st, err, "call_function", *s);
   }
 
@@ -674,6 +694,15 @@ extern "C" int32_t og_script_call_external(og_script_host* host, const char* nam
   ScriptStats::Bridge stats;
   return guarded(host, err, errLen, [&](OgVm::Rust& r) {
     return r.callExternal(std::string_view(name, nameLen), args, count, retKind, *ret);
+    });
+  }
+
+extern "C" int32_t og_script_call_external_index(og_script_host* host, uint32_t symbol, const og_script_value* args,
+                                                 size_t count, uint32_t retKind, og_script_value* ret, char* err,
+                                                 size_t errLen) {
+  ScriptStats::Bridge stats;
+  return guarded(host, err, errLen, [&](OgVm::Rust& r) {
+    return r.callExternal(symbol, args, count, retKind, *ret);
     });
   }
 

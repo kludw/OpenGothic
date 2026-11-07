@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OG_SCRIPT_VERSION 3
+#define OG_SCRIPT_VERSION 4
 
 /* Status codes of backend callbacks and host functions. */
 #define OG_SCRIPT_OK          0
@@ -158,6 +158,11 @@ int32_t og_script_instance_release(og_script_host* host, og_script_inst inst, ch
 int32_t og_script_call_external(og_script_host* host, const char* name, size_t name_len,
                                 const og_script_value* args, size_t count, uint32_t ret_kind,
                                 og_script_value* ret, char* err, size_t err_len);
+/* og_script_call_external for the external whose symbol index is `symbol` (the index the
+ * backend's bind_external received), without a name lookup per call. Version 4 (task 4.19). */
+int32_t og_script_call_external_index(og_script_host* host, uint32_t symbol, const og_script_value* args,
+                                      size_t count, uint32_t ret_kind, og_script_value* ret, char* err,
+                                      size_t err_len);
 
 /* `--script-trace` (task 4.13) is recording: externals the backend runs itself must then be
  * reported with og_script_trace_external. 1 or 0. Version 2. */
@@ -178,7 +183,7 @@ void og_script_trace_mark(uint64_t action, const char* tool, size_t tool_len);
  * costs one flag check). `calls` and `ns`: the outermost entries of OgVm (call_function,
  * init_instance, init_opaque_instance, allocate_instance) per thread and their steady-clock
  * time, externals and nested entries included, on either backend. `bridge`:
- * og_script_call_external calls and `bridge_ns` the steady-clock time of the outermost
+ * og_script_call_external(_index) calls and `bridge_ns` the steady-clock time of the outermost
  * ones per thread (the engine's callback, and any script it runs, included); `accessors`: og_script_member_get/set and
  * og_script_global_get/set calls (all three 0 on ZenKit). Any thread. Version 3. */
 typedef struct og_script_stats {
