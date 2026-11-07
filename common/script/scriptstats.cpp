@@ -11,6 +11,7 @@ og_script_stats ScriptStats::take() {
   s.ns        = nanos    .exchange(0, std::memory_order_relaxed);
   s.bridge    = bridges  .exchange(0, std::memory_order_relaxed);
   s.accessors = accessors.exchange(0, std::memory_order_relaxed);
+  s.bridge_ns = bridgeNanos.exchange(0, std::memory_order_relaxed);
   return s;
   }
 

@@ -178,13 +178,15 @@ void og_script_trace_mark(uint64_t action, const char* tool, size_t tool_len);
  * costs one flag check). `calls` and `ns`: the outermost entries of OgVm (call_function,
  * init_instance, init_opaque_instance, allocate_instance) per thread and their steady-clock
  * time, externals and nested entries included, on either backend. `bridge`:
- * og_script_call_external calls; `accessors`: og_script_member_get/set and
- * og_script_global_get/set calls (both 0 on ZenKit). Any thread. Version 3. */
+ * og_script_call_external calls and `bridge_ns` the steady-clock time of the outermost
+ * ones per thread (the engine's callback, and any script it runs, included); `accessors`: og_script_member_get/set and
+ * og_script_global_get/set calls (all three 0 on ZenKit). Any thread. Version 3. */
 typedef struct og_script_stats {
   uint64_t calls;
   uint64_t ns;
   uint64_t bridge;
   uint64_t accessors;
+  uint64_t bridge_ns;
 } og_script_stats;
 /* Turns the accounting on (1) or off (0); either way the totals start again from 0. */
 void og_script_stats_enable(int32_t on);

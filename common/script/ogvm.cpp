@@ -671,7 +671,7 @@ extern "C" int32_t og_script_instance_release(og_script_host* host, og_script_in
 extern "C" int32_t og_script_call_external(og_script_host* host, const char* name, size_t nameLen,
                                            const og_script_value* args, size_t count, uint32_t retKind,
                                            og_script_value* ret, char* err, size_t errLen) {
-  ScriptStats::bridge();
+  ScriptStats::Bridge stats;
   return guarded(host, err, errLen, [&](OgVm::Rust& r) {
     return r.callExternal(std::string_view(name, nameLen), args, count, retKind, *ret);
     });
