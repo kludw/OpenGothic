@@ -23,7 +23,8 @@
  * Threads: a VM is used by one thread at a time (the engine's own rule for ZenKit VMs);
  * host functions run on the thread of the backend call that made them. Callbacks must not
  * throw or unwind (a Rust backend wraps them in catch_unwind); host functions catch every
- * C++ exception and report it as OG_SCRIPT_ERROR with the message. */
+ * C++ exception and report it as OG_SCRIPT_ERROR with the message. Version 3 (task 4.19):
+ * og_script_stats_enable/take. */
 #pragma once
 
 #include <stddef.h>
@@ -33,11 +34,13 @@
 extern "C" {
 #endif
 
-#define OG_SCRIPT_VERSION 2
+#define OG_SCRIPT_VERSION 3
 
 /* Status codes of backend callbacks and host functions. */
 #define OG_SCRIPT_OK          0
-/* Failed; the message is in the call's error buffer (NUL-terminated, cut to its size). */
+/* Failed; the message is in the call's error buffer (NUL-terminated, cut to its size).
+ * Callers only set the buffer's first byte to NUL (version 3): whoever reports a failure
+ * writes its message from byte 0, NUL-terminated within err_len, or leaves it empty. */
 #define OG_SCRIPT_ERROR      -1
 /* og_script_call_external: no callback and no default external registered for the name. */
 #define OG_SCRIPT_NO_EXTERNAL -2
@@ -170,6 +173,23 @@ int32_t og_script_trace_external(og_script_host* host, const char* name, size_t 
  * `tool` (raw bytes) in a gameplay script trace (`--script-trace-gameplay`), so a replay names
  * the action a divergence happened in. A no-op otherwise. Any thread; no backend needed. */
 void og_script_trace_mark(uint64_t action, const char* tool, size_t tool_len);
+
+/* Task 4.19: script time accounting, for comparing the backends. Off by default (each hook
+ * costs one flag check). `calls` and `ns`: the outermost entries of OgVm (call_function,
+ * init_instance, init_opaque_instance, allocate_instance) per thread and their steady-clock
+ * time, externals and nested entries included, on either backend. `bridge`:
+ * og_script_call_external calls; `accessors`: og_script_member_get/set and
+ * og_script_global_get/set calls (both 0 on ZenKit). Any thread. Version 3. */
+typedef struct og_script_stats {
+  uint64_t calls;
+  uint64_t ns;
+  uint64_t bridge;
+  uint64_t accessors;
+} og_script_stats;
+/* Turns the accounting on (1) or off (0); either way the totals start again from 0. */
+void og_script_stats_enable(int32_t on);
+/* The totals since the last take or enable, then zero. */
+void og_script_stats_take(og_script_stats* out);
 
 /* --- Test support (seam tests without a running game) --- */
 

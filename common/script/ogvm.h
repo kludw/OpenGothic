@@ -2,6 +2,7 @@
 
 #include <zenkit/DaedalusVm.hh>
 
+#include "scriptstats.h"
 #include "scripttrace.h"
 #include "../../game/capi/og_script.h"
 
@@ -24,6 +25,7 @@
 // each entry pops its arguments off the ZenKit stack and pushes the result exactly like the
 // callback ZenKit itself stores, so a call coming from another VM can run OpenGothic's callback.
 // With `--script-trace` (task 4.13) every entry and external also goes to ScriptTrace.
+// With og_script_stats_enable (task 4.19) every entry opens a ScriptStats::Top: the outermost is timed.
 // With a backend registered through game/capi/og_script.h (task 4.14) that takes this VM, the
 // entries run on the backend (the Rust VM) instead: ZenKit still owns the symbols' C++ side,
 // binds instances and checks them, and serves the externals and member accesses the backend
@@ -65,6 +67,7 @@ class OgVm final {
 
     template<typename R = zenkit::IgnoreReturnValue, typename S, typename... P>
     R call_function(S&& sym, P... args) {
+      ScriptStats::Top stats;
       if(!ScriptTrace::active() && rust==nullptr)
         return zk->template call_function<R, P...>(std::forward<S>(sym), args...);
       // ZenKit's by-name overload only looks the symbol up; calling by symbol is the same call.
@@ -79,6 +82,7 @@ class OgVm final {
     // then the overload taking it), so the trace numbers the instance before its script runs.
     template<typename T, typename S>
     std::shared_ptr<T> init_instance(S&& sym) {
+      ScriptStats::Top stats;
       if(!ScriptTrace::active() && rust==nullptr && !dumping())
         return zk->template init_instance<T>(std::forward<S>(sym));
       auto inst = std::make_shared<T>();
@@ -87,6 +91,7 @@ class OgVm final {
       }
     template<typename T, typename S>
     void init_instance(std::shared_ptr<T> const& instance, S&& sym) {
+      ScriptStats::Top stats;
       if(!ScriptTrace::active() && rust==nullptr && !dumping())
         return zk->template init_instance<T>(instance, std::forward<S>(sym));
       auto* s = symbolOf(sym);
@@ -105,6 +110,7 @@ class OgVm final {
       dump(*instance, s);
       }
     std::shared_ptr<zenkit::DaedalusInstance> init_opaque_instance(zenkit::DaedalusSymbol* sym) {
+      ScriptStats::Top stats;
       if(!ScriptTrace::active() && rust==nullptr && !dumping())
         return zk->init_opaque_instance(sym);
       std::shared_ptr<zenkit::DaedalusInstance> inst;
@@ -121,6 +127,7 @@ class OgVm final {
 
     template<typename T, typename S>
     std::shared_ptr<T> allocate_instance(S&& sym) {
+      ScriptStats::Top stats;
       if(!ScriptTrace::active() && rust==nullptr)
         return zk->template allocate_instance<T>(std::forward<S>(sym));
       auto inst = std::make_shared<T>();
@@ -129,6 +136,7 @@ class OgVm final {
       }
     template<typename T, typename S>
     void allocate_instance(std::shared_ptr<T> const& instance, S&& sym) {
+      ScriptStats::Top stats;
       if(!ScriptTrace::active() && rust==nullptr)
         return zk->template allocate_instance<T>(instance, std::forward<S>(sym));
       auto* s = symbolOf(sym);

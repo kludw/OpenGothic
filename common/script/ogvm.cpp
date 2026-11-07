@@ -43,6 +43,10 @@ class OgVm::Rust final {
     void*                     vm    = nullptr;
     std::vector<Pin>          pins;
     std::vector<uint32_t>     freeSlots;
+    // Slots pinned since the last releaseAll (a slot released and pinned again is listed
+    // twice): releaseAll visits only these, not every slot ever made (task 4.19: the world
+    // load pins thousands in one entry, then each later entry pins a handful).
+    std::vector<uint32_t>     pinned;
     std::unordered_map<const zenkit::DaedalusInstance*, uint32_t> slotOf;
     // Strings handed to the backend by member_get / call_external, valid until the next call.
     std::string               scratch;
@@ -80,6 +84,7 @@ class OgVm::Rust final {
       // Generation 0 means null; a slot whose generation would wrap is retired.
       p.generation += 1;
       slotOf[inst.get()] = slot;
+      pinned.push_back(slot);
       return {slot, p.generation};
       }
 
@@ -105,15 +110,22 @@ class OgVm::Rust final {
       }
 
     void releaseAll() {
-      for(uint32_t slot=0; slot<pins.size(); ++slot) {
+      // Taken out first: an instance's destructor may run below and must not touch the list.
+      std::vector<uint32_t> slots;
+      slots.swap(pinned);
+      for(uint32_t slot:slots) {
         auto& p = pins[slot];
         if(p.inst==nullptr)
           continue;
+        slotOf.erase(p.inst.get());
         p.inst.reset();
         if(p.generation!=UINT32_MAX)
           freeSlots.push_back(slot);
         }
-      slotOf.clear();
+      // Its capacity back (no allocation per entry), unless something was pinned meanwhile.
+      slots.clear();
+      if(pinned.empty())
+        pinned.swap(slots);
       }
 
     zenkit::DaedalusSymbol& member(uint32_t index) {
@@ -356,11 +368,12 @@ class OgVm::Rust final {
       }
 
     // Turns a backend status into the engine's exception.
-    void check(int32_t status, const char* err, std::string_view what) {
+    // `what` + the symbol's name only on a panic: entries run every frame (task 4.19).
+    void check(int32_t status, const char* err, std::string_view what, const zenkit::DaedalusSymbol& sym) {
       if(status==OG_SCRIPT_OK)
         return;
       if(status==OG_SCRIPT_PANICKED)
-        throw zenkit::DaedalusVmException {"og_script backend panicked in " + std::string(what) + ": " + err};
+        throw zenkit::DaedalusVmException {"og_script backend panicked in " + std::string(what) + " " + sym.name() + ": " + err};
       throw zenkit::DaedalusVmException {std::string(err)};
       }
   };
@@ -467,31 +480,34 @@ og_script_inst OgVm::backendPin(std::shared_ptr<zenkit::DaedalusInstance> const&
 void OgVm::backendCall(const zenkit::DaedalusSymbol* s, std::vector<og_script_value>& args, uint32_t retKind, og_script_value& ret) {
   // callOn pinned the arguments before: they go with this entry.
   Rust::Entry entry(*rust);
-  char err[1024] = {};
+  char err[1024];
+  err[0] = '\0'; // the backend NUL-terminates a message it writes (task 4.19: no 1 KiB memset per entry)
   auto st = backend.call_function(rust->vm, s->index(), args.data(), args.size(), retKind, &ret, err, sizeof(err));
-  rust->check(st, err, "call_function " + s->name());
+  rust->check(st, err, "call_function", *s);
   }
 
 void OgVm::backendInit(std::shared_ptr<zenkit::DaedalusInstance> const& inst, const zenkit::DaedalusSymbol* s) {
   Rust::Entry entry(*rust);
-  char err[1024] = {};
+  char err[1024];
+  err[0] = '\0'; // the backend NUL-terminates a message it writes (task 4.19: no 1 KiB memset per entry)
   auto h  = rust->pin(inst);
   auto st = backend.init_instance(rust->vm, s->index(), h, err, sizeof(err));
-  rust->check(st, err, "init_instance " + s->name());
+  rust->check(st, err, "init_instance", *s);
   }
 
 void OgVm::backendBind(std::shared_ptr<zenkit::DaedalusInstance> const& inst, const zenkit::DaedalusSymbol* s) {
   Rust::Entry entry(*rust);
-  char err[1024] = {};
+  char err[1024];
+  err[0] = '\0'; // the backend NUL-terminates a message it writes (task 4.19: no 1 KiB memset per entry)
   auto h  = rust->pin(inst);
   auto st = backend.bind_instance(rust->vm, s->index(), h, err, sizeof(err));
-  rust->check(st, err, "allocate_instance " + s->name());
+  rust->check(st, err, "allocate_instance", *s);
   }
 
 void OgVm::backendBindExternal(const zenkit::DaedalusSymbol* sym) {
   char err[1024] = {};
   auto st = backend.bind_external(rust->vm, sym->index(), err, sizeof(err));
-  rust->check(st, err, "bind_external " + sym->name());
+  rust->check(st, err, "bind_external", *sym);
   }
 
 void OgVm::backendBindDefault() {
@@ -587,21 +603,25 @@ extern "C" void og_script_set_backend(const og_script_backend* b) {
 
 extern "C" int32_t og_script_member_get(og_script_host* host, og_script_inst inst, uint32_t member, uint16_t index,
                                         uint32_t kind, og_script_value* out, char* err, size_t errLen) {
+  ScriptStats::accessor();
   return guarded(host, err, errLen, [&](OgVm::Rust& r) { return r.memberGet(inst, member, index, kind, *out); });
   }
 
 extern "C" int32_t og_script_member_set(og_script_host* host, og_script_inst inst, uint32_t member, uint16_t index,
                                         const og_script_value* value, char* err, size_t errLen) {
+  ScriptStats::accessor();
   return guarded(host, err, errLen, [&](OgVm::Rust& r) { return r.memberSet(inst, member, index, *value); });
   }
 
 extern "C" int32_t og_script_global_get(og_script_host* host, uint32_t symbol, uint16_t index, uint32_t kind,
                                         og_script_value* out, char* err, size_t errLen) {
+  ScriptStats::accessor();
   return guarded(host, err, errLen, [&](OgVm::Rust& r) { return r.globalGet(symbol, index, kind, *out); });
   }
 
 extern "C" int32_t og_script_global_set(og_script_host* host, uint32_t symbol, uint16_t index,
                                         const og_script_value* value, char* err, size_t errLen) {
+  ScriptStats::accessor();
   return guarded(host, err, errLen, [&](OgVm::Rust& r) { return r.globalSet(symbol, index, *value); });
   }
 
@@ -651,6 +671,7 @@ extern "C" int32_t og_script_instance_release(og_script_host* host, og_script_in
 extern "C" int32_t og_script_call_external(og_script_host* host, const char* name, size_t nameLen,
                                            const og_script_value* args, size_t count, uint32_t retKind,
                                            og_script_value* ret, char* err, size_t errLen) {
+  ScriptStats::bridge();
   return guarded(host, err, errLen, [&](OgVm::Rust& r) {
     return r.callExternal(std::string_view(name, nameLen), args, count, retKind, *ret);
     });
