@@ -26,6 +26,7 @@
 #include "capi/ogsim.h"
 #include "capi/ogsimwaynet.h"
 #include "capi/ogsimtables.h"
+#include "capi/ogsavewaypoints.h"
 
 const char* materialTag(ItemMaterial src) {
   switch(src) {
@@ -206,6 +207,7 @@ void World::postInit() {
 
 void World::load(Serialize &fin) {
   fin.setContext(this);
+  OgSaveWaypoints::load(fin,*this); // opengothic-rs (task 5.18, UB-38): before any way point read
   fin.setEntry("worlds/",wname,"/world");
 
   uint32_t sz=0;
@@ -234,6 +236,7 @@ void World::save(Serialize &fout) {
     }
 
   wobj.save(fout);
+  OgSaveWaypoints::save(fout,*this); // opengothic-rs (task 5.18, UB-38)
   }
 
 uint32_t World::npcId(const Npc *ptr) const {

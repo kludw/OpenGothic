@@ -18,6 +18,7 @@
 #include "gothic.h"
 #include "capi/ogrng.h"
 #include "capi/ogsaverefs.h"
+#include "capi/ogsavewaypoints.h"
 #include "commandline.h"
 #include "script/scripttrace.h"
 
@@ -252,6 +253,7 @@ void GameSession::save(Serialize &fout, std::string_view name, const Pixmap& scr
   // opengothic-rs: fork-only entry (task 5.4); stock OpenGothic never opens it.
   fout.setEntry("opengothic-rs/rng");
   OgRng::save(fout);
+  OgSaveWaypoints::checkSaved(fout); // opengothic-rs (task 5.18, UB-38)
   Gothic::inst().setLoadingProgress(80);
   }
 

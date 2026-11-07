@@ -39,9 +39,9 @@ struct OgSimWaynet final {
     // The matrix's point as (list, index); false for a pointer outside it. Also used by
     // the routine module (OgSimRoutine) for the points routines hold.
     static bool            toPoint(const WayMatrix& m, const WayPoint* p, og_sim_point& out);
+    // The inverse; false for a point the matrix doesn't have. Also used by OgSaveWaypoints.
+    static bool            fromPoint(const WayMatrix& m, og_sim_point p, const WayPoint*& out);
 
   private:
     static void            load(World& world, const WayMatrix& m, const zenkit::VfsNode& zen);
-    // The inverse; false for a point the matrix doesn't have.
-    static bool            fromPoint(const WayMatrix& m, og_sim_point p, const WayPoint*& out);
   };

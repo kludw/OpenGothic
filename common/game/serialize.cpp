@@ -6,6 +6,7 @@
 #include <exception>
 
 #include "savegameheader.h"
+#include "capi/ogsavewaypoints.h"
 #include "world/world.h"
 #include "world/fplock.h"
 #include "world/waypoint.h"
@@ -125,6 +126,8 @@ void Serialize::closeEntry() {
   }
 
 bool Serialize::implSetEntry(std::string_view fname) {
+  ogEntry = fname; // opengothic-rs (task 5.18): OgSaveWaypoints numbers way points per entry
+  ogWpSeq = 0;
   if(dump!=nullptr) {
     if(dumpEntry)
       dump->append("]],\n");
@@ -258,11 +261,17 @@ void Serialize::implRead(WeaponState &w) {
 
 void Serialize::implWrite(const WayPoint* wptr) {
   implWrite(wptr ? wptr->name : "");
+  const uint32_t seq = ogWpSeq++; // opengothic-rs (task 5.18, UB-38)
+  if(ctx!=nullptr)
+    OgSaveWaypoints::record(*this,*ctx,seq,wptr);
   }
 
 void Serialize::implRead(const WayPoint*& wptr) {
   implRead(tmpStr);
   wptr = ctx==nullptr ? nullptr : ctx->findPoint(tmpStr,false);
+  const uint32_t seq = ogWpSeq++; // opengothic-rs (task 5.18, UB-38)
+  if(ctx!=nullptr && !ogWpRefs.empty())
+    OgSaveWaypoints::resolve(*this,*ctx,seq,tmpStr,wptr);
   }
 
 void Serialize::implWrite(const ScriptFn& fn) {

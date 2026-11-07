@@ -142,6 +142,10 @@ void Interactive::load(Serialize &fin) {
   visual.load(fin, *this);
   visual.setObjMatrix(transform());
   visual.syncPhysics();
+
+  // opengothic-rs (task 5.18, UB-39): absent in stock saves, then the mobsi doesn't wait, as stock.
+  if(fin.setEntry("worlds/",fin.worldName(),"/mobsi/",vobObjectID,"/opengothic-rs"))
+    fin.read(waitAnim);
   }
 
 void Interactive::save(Serialize &fout) const {
@@ -167,6 +171,12 @@ void Interactive::save(Serialize &fout) const {
 
   fout.setEntry("worlds/",fout.worldName(),"/mobsi/",vobObjectID,"/visual");
   visual.save(fout,*this);
+
+  // opengothic-rs (task 5.18): fork-only entry, stock OpenGothic never opens it. waitAnim:
+  // without it a mobsi in use takes its next state step at once after a load instead of
+  // when the user's animation ends (UB-39).
+  fout.setEntry("worlds/",fout.worldName(),"/mobsi/",vobObjectID,"/opengothic-rs");
+  fout.write(waitAnim);
   }
 
 void Interactive::postValidate() {

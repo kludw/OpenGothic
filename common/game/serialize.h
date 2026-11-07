@@ -341,5 +341,21 @@ class Serialize {
     std::string*             dump      = nullptr;
     bool                     dumpEntry = false;  // an entry's value list is open
     bool                     dumpFirst = true;   // no value yet in the open list (or no entry yet)
+
+  public:
+    // opengothic-rs (task 5.18): a way point write the name alone doesn't identify
+    // (OgSaveWaypoints): the `seq`-th WayPoint* of `entry`, as og_sim_point.
+    struct OgWpRef {
+      std::string entry;
+      uint32_t    seq   = 0;
+      uint32_t    kind  = 0;
+      uint32_t    index = 0;
+      };
+
+  private:
+    std::string              ogEntry;       // the open entry, in every mode
+    uint32_t                 ogWpSeq = 0;   // WayPoint* written/read so far in it
+    std::vector<OgWpRef>     ogWpRefs;      // write: recorded; read: loaded, sorted
+  friend struct OgSaveWaypoints;
   };
 
