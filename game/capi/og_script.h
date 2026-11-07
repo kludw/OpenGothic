@@ -24,7 +24,7 @@
  * host functions run on the thread of the backend call that made them. Callbacks must not
  * throw or unwind (a Rust backend wraps them in catch_unwind); host functions catch every
  * C++ exception and report it as OG_SCRIPT_ERROR with the message. Version 3 (task 4.19):
- * og_script_stats_enable/take. */
+ * og_script_stats_enable/take. Version 5 (task 4.21): og_script_trace_patch. */
 #pragma once
 
 #include <stddef.h>
@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OG_SCRIPT_VERSION 4
+#define OG_SCRIPT_VERSION 5
 
 /* Status codes of backend callbacks and host functions. */
 #define OG_SCRIPT_OK          0
@@ -178,6 +178,12 @@ int32_t og_script_trace_external(og_script_host* host, const char* name, size_t 
  * `tool` (raw bytes) in a gameplay script trace (`--script-trace-gameplay`), so a replay names
  * the action a divergence happened in. A no-op otherwise. Any thread; no backend needed. */
 void og_script_trace_mark(uint64_t action, const char* tool, size_t tool_len);
+/* Task 4.21: the backend entered function or instance symbol `symbol` through script patch
+ * `id` (a Gothic-fixes catalog ID, e.g. GB-1) of kind `kind` (replace, before, after; raw
+ * bytes), so a parity diff can name the patch behind a deviation. Recorded as a `patch` event;
+ * a no-op when not tracing. Version 5. */
+int32_t og_script_trace_patch(og_script_host* host, const char* id, size_t id_len, uint32_t symbol,
+                              const char* kind, size_t kind_len, char* err, size_t err_len);
 
 /* Task 4.19: script time accounting, for comparing the backends. Off by default (each hook
  * costs one flag check). `calls` and `ns`: the outermost entries of OgVm (call_function,

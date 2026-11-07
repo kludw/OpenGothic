@@ -485,6 +485,15 @@ void ScriptTrace::mark(uint64_t action, std::string_view tool) {
     writeLine(s, "{\"ev\":\"mark\",\"action\":" + std::to_string(action) + ",\"tool\":" + jsonString(tool) + "}");
   }
 
+void ScriptTrace::patch(std::string_view vmName, std::string_view id, std::string_view symbol, std::string_view kind) {
+  if(!active())
+    return;
+  auto& s = state();
+  std::lock_guard<std::mutex> guard(s.sync);
+  writeLine(s, "{\"ev\":\"patch\",\"vm\":" + jsonString(vmName) + ",\"id\":" + jsonString(id) +
+               ",\"symbol\":" + jsonString(symbol) + ",\"kind\":" + jsonString(kind) + "}");
+  }
+
 void ScriptTrace::vmGone(const zenkit::DaedalusVm& vm) {
   if(!active())
     return;

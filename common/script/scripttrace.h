@@ -32,6 +32,9 @@ namespace ScriptTrace {
   void tick();
   // `{"ev":"mark","action":N,"tool":…}` (gameplay mode): a recorded action starts (og_script_trace_mark).
   void mark(uint64_t action, std::string_view tool);
+  // `{"ev":"patch","vm":…,"id":…,"symbol":"NAME","kind":…}` (task 4.21): the Rust backend
+  // entered `symbol` through a script patch (og_script_trace_patch).
+  void patch(std::string_view vmName, std::string_view id, std::string_view symbol, std::string_view kind);
 
   // A VM was created (OgVm's constructor) / is being destroyed (its instances aren't synced any more).
   void vm(const zenkit::DaedalusVm& vm, std::string_view vmName, size_t symbols);

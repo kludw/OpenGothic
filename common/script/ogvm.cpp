@@ -225,6 +225,15 @@ class OgVm::Rust final {
         trace.ret(ret!=nullptr ? traceValue(*ret) : "null");
       }
 
+    void tracePatch(std::string_view id, uint32_t symbol, std::string_view kind) {
+      if(!ScriptTrace::active())
+        return;
+      auto* sym = owner->zk->find_symbol_by_index(symbol);
+      if(sym==nullptr)
+        throw std::runtime_error("og_script_trace_patch: no symbol " + std::to_string(symbol));
+      ScriptTrace::patch(owner->vmName, id, sym->name(), kind);
+      }
+
     void push(const og_script_value& v) {
       auto& zk = *owner->zk;
       switch(v.kind) {
@@ -667,6 +676,14 @@ extern "C" int32_t og_script_trace_external(og_script_host* host, const char* na
                                             int32_t threw, char* err, size_t errLen) {
   return guarded(host, err, errLen, [&](OgVm::Rust& r) {
     r.traceExternal(std::string_view(name, nameLen), args, count, ret, threw!=0);
+    return OG_SCRIPT_OK;
+    });
+  }
+
+extern "C" int32_t og_script_trace_patch(og_script_host* host, const char* id, size_t idLen, uint32_t symbol,
+                                         const char* kind, size_t kindLen, char* err, size_t errLen) {
+  return guarded(host, err, errLen, [&](OgVm::Rust& r) {
+    r.tracePatch(std::string_view(id, idLen), symbol, std::string_view(kind, kindLen));
     return OG_SCRIPT_OK;
     });
   }
